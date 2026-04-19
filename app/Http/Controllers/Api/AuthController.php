@@ -54,7 +54,7 @@ class AuthController extends Controller {
         try {
             // Pemanggilan sesuai constructor: ($otp, $subjectLine)
             $subject = "Kode OTP Pemulihan Akun - BKAD Kota Bogor";
-            Mail::to($user->email)->send(new OTPMail($otp, $subject));
+           Mail::to($user->email)->queue(new OTPMail($otp, $subject));
             
             return response()->json(['message' => 'Kode OTP berhasil dikirim ke email Anda']);
         } catch (\Exception $e) {

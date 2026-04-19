@@ -42,7 +42,7 @@ class ProfileController extends Controller {
             ['old_otp' => Hash::make($otp), 'expires_at' => now()->addMinutes(15), 'created_at' => now()]
         );
 
-        Mail::to($request->user()->email)->send(new OTPMail($otp, "OTP Perubahan Email (Lama)"));
+        Mail::to($request->user()->email)->queue(new OTPMail($otp, "OTP Perubahan Email (Lama)"));
         return response()->json(['message' => 'Kode OTP dikirim ke email lama']);
     }
 
@@ -66,7 +66,7 @@ class ProfileController extends Controller {
             'expires_at' => now()->addMinutes(15)
         ]);
 
-        Mail::to($request->new_email)->send(new OTPMail($newOtp, "Verifikasi Email Baru"));
+        Mail::to($request->new_email)->queue(new OTPMail($newOtp, "Verifikasi Email Baru"));
         return response()->json(['message' => 'Kode OTP dikirim ke email baru']);
     }
 
@@ -94,7 +94,7 @@ class ProfileController extends Controller {
             ['token' => Hash::make($otp), 'created_at' => now()]
         );
 
-        Mail::to($request->user()->email)->send(new OTPMail($otp, "OTP Pemulihan Kata Sandi"));
+        Mail::to($request->user()->email)->queue(new OTPMail($otp, "OTP Pemulihan Kata Sandi"));
         return response()->json(['message' => 'Kode OTP telah dikirim']);
     }
 
