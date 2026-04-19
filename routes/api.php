@@ -39,7 +39,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/user/request-new-email-otp', [ProfileController::class, 'requestNewEmailOtp']);
     Route::post('/user/finalize-email', [ProfileController::class, 'finalizeEmailChange']);
     
-    Route::post('/user/request-password-otp', [ProfileController::class, 'requestPasswordOTP']);
+   Route::post('/user/request-password-otp', [ProfileController::class, 'requestPasswordOtp']);
+
     Route::post('/user/verify-password-otp', [ProfileController::class, 'verifyPasswordOtp']);
     Route::post('/user/update-password', [ProfileController::class, 'updatePassword']);
 
