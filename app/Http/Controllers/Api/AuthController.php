@@ -6,12 +6,12 @@ use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\{Hash, Validator, Mail};
 use App\Http\Controllers\Controller;
-use App\Mail\OTPMail;
+use App\Mail\OTPMail; // SESUAIKAN DENGAN NAMA CLASS KAMU
 use Carbon\Carbon;
 
 class AuthController extends Controller {
 
-    // --- LOGIN ---
+    // --- FUNGSI LOGIN ---
     public function login(Request $request) {
         $request->validate([
             'email' => 'required|email', 
@@ -52,8 +52,9 @@ class AuthController extends Controller {
         $user->save();
 
         try {
+            // Pemanggilan sesuai constructor: ($otp, $subjectLine)
             $subject = "Kode OTP Pemulihan Akun - BKAD Kota Bogor";
-            Mail::to($user->email)->send(new OTPMail($otp, $subject));
+           Mail::to($user->email)->queue(new OTPMail($otp, $subject));
             
             return response()->json(['message' => 'Kode OTP berhasil dikirim ke email Anda']);
         } catch (\Exception $e) {
@@ -64,7 +65,7 @@ class AuthController extends Controller {
         }
     }
 
-    // --- 2. VERIFIKASI OTP (LUPA PASSWORD) ---
+    // --- 2. VERIFIKASI OTP ---
     public function forgotPasswordVerify(Request $request) {
         $request->validate([
             'email' => 'required|email',
@@ -82,7 +83,7 @@ class AuthController extends Controller {
         return response()->json(['message' => 'OTP Valid. Silakan atur password baru.']);
     }
 
-    // --- 3. RESET PASSWORD FINAL (LUPA PASSWORD) ---
+    // --- 3. RESET PASSWORD FINAL ---
     public function forgotPasswordReset(Request $request) {
         $request->validate([
             'email' => 'required|email',
@@ -99,7 +100,7 @@ class AuthController extends Controller {
         }
 
         $user->password = Hash::make($request->password);
-        $user->otp = null; 
+        $user->otp = null; // Bersihkan OTP
         $user->save();
 
         return response()->json(['message' => 'Password berhasil diubah. Silakan login.']);
