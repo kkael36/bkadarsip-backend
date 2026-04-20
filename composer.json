@@ -16,8 +16,7 @@
         "resend/resend-laravel": "^1.3",
         "symfony/css-selector": "^7.0",
         "symfony/yaml": "^7.0",
-        "thiagoalessio/tesseract_ocr": "^2.13",
-        "resend/resend": "^1.3"
+        "thiagoalessio/tesseract_ocr": "^2.13"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",
