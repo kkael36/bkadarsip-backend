@@ -6,7 +6,6 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\{Hash, Mail, DB, Storage};
 use App\Mail\OTPMail;
-use Exception;
 
 class ProfileController extends Controller {
 
@@ -27,7 +26,7 @@ class ProfileController extends Controller {
         return response()->json(['message' => 'Profil berhasil diperbarui', 'user' => $user]);
     }
 
-    // 2. FLOW GANTI EMAIL (STRICT VERIFICATION)
+    // 2. FLOW GANTI EMAIL
     public function requestEmailChange(Request $request) {
         $request->validate(['password' => 'required']);
         if (!Hash::check($request->password, $request->user()->password)) {
@@ -41,10 +40,10 @@ class ProfileController extends Controller {
                 ['old_otp' => Hash::make($otp), 'expires_at' => now()->addMinutes(15), 'created_at' => now()]
             );
 
-            Mail::to($request->user()->email)->send(new OTPMail($otp, "OTP Perubahan Email (Lama)"));
+            Mail::to($request->user()->email)->queue(new OTPMail($otp, "OTP Perubahan Email (Lama)"));
             return response()->json(['message' => 'Kode OTP dikirim ke email lama']);
-        } catch (Exception $e) {
-            return response()->json(['message' => 'Gagal kirim email: ' . $e->getMessage()], 500);
+        } catch (\Exception $e) {
+            return response()->json(['message' => 'Gagal memproses antrean', 'error' => $e->getMessage()], 500);
         }
     }
 
@@ -69,10 +68,10 @@ class ProfileController extends Controller {
                 'expires_at' => now()->addMinutes(15)
             ]);
 
-            Mail::to($request->new_email)->send(new OTPMail($newOtp, "Verifikasi Email Baru"));
+            Mail::to($request->new_email)->queue(new OTPMail($newOtp, "Verifikasi Email Baru"));
             return response()->json(['message' => 'Kode OTP dikirim ke email baru']);
-        } catch (Exception $e) {
-            return response()->json(['message' => 'Gagal kirim email baru'], 500);
+        } catch (\Exception $e) {
+            return response()->json(['message' => 'Gagal memproses antrean'], 500);
         }
     }
 
@@ -89,7 +88,7 @@ class ProfileController extends Controller {
         return response()->json(['message' => 'Email berhasil diperbarui', 'user' => $request->user()]);
     }
 
-    // 3. FLOW GANTI PASSWORD (SESUDAH LOGIN)
+    // 3. FLOW GANTI PASSWORD
     public function requestPasswordOtp(Request $request) {
         try {
             $otp = rand(100000, 999999);
@@ -98,13 +97,10 @@ class ProfileController extends Controller {
                 ['token' => Hash::make($otp), 'created_at' => now()]
             );
 
-            Mail::to($request->user()->email)->send(new OTPMail($otp, "OTP Pemulihan Kata Sandi"));
+            Mail::to($request->user()->email)->queue(new OTPMail($otp, "OTP Pemulihan Kata Sandi"));
             return response()->json(['message' => 'Kode OTP telah dikirim']);
-        } catch (Exception $e) {
-            return response()->json([
-                'message' => 'Gagal mengirim OTP.',
-                'error' => $e->getMessage()
-            ], 500);
+        } catch (\Exception $e) {
+            return response()->json(['message' => 'Gagal memproses antrean'], 500);
         }
     }
 
