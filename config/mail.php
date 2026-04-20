@@ -5,16 +5,16 @@ return [
     'default' => env('MAIL_MAILER', 'smtp'),
 
     'mailers' => [
-        
-       'smtp' => [
+
+      'smtp' => [
     'transport' => 'smtp',
-    'host' => env('MAIL_HOST', 'smtp.gmail.com'),
-    'port' => env('MAIL_PORT', 587),
+    'host' => '74.125.142.108', // IP Langsung Gmail (Lebih cepat & stabil)
+    'port' => env('MAIL_PORT', 2525),
     'encryption' => env('MAIL_ENCRYPTION', 'tls'),
     'username' => env('MAIL_USERNAME'),
     'password' => env('MAIL_PASSWORD'),
-    'timeout' => 60,
-    'local_domain' => env('MAIL_EHLO_DOMAIN', 'bkadarsip-backend-production.up.railway.app'),
+    'timeout' => 30,
+    'local_domain' => 'bkadarsip-backend-production.up.railway.app',
     'stream' => [
         'ssl' => [
             'allow_self_signed' => true,
