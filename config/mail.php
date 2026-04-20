@@ -2,29 +2,24 @@
 
 return [
 
-    'default' => env('MAIL_MAILER', 'smtp'),
+    'default' => env('MAIL_MAILER', 'resend'),
 
     'mailers' => [
-
-      'smtp' => [
-    'transport' => 'smtp',
-    'host' => '74.125.142.108', // IP Langsung Gmail (Lebih cepat & stabil)
-    'port' => env('MAIL_PORT', 2525),
-    'encryption' => env('MAIL_ENCRYPTION', 'tls'),
-    'username' => env('MAIL_USERNAME'),
-    'password' => env('MAIL_PASSWORD'),
-    'timeout' => 30,
-    'local_domain' => 'bkadarsip-backend-production.up.railway.app',
-    'stream' => [
-        'ssl' => [
-            'allow_self_signed' => true,
-            'verify_peer' => false,
-            'verify_peer_name' => false,
+        'resend' => [
+            'transport' => 'resend',
         ],
-    ],
-],
 
-        // Mailer lainnya biarkan standar...
+        'smtp' => [
+            'transport' => 'smtp',
+            'host' => env('MAIL_HOST', 'smtp.gmail.com'),
+            'port' => env('MAIL_PORT', 587),
+            'encryption' => env('MAIL_ENCRYPTION', 'tls'),
+            'username' => env('MAIL_USERNAME'),
+            'password' => env('MAIL_PASSWORD'),
+            'timeout' => 30,
+            'local_domain' => env('MAIL_EHLO_DOMAIN', 'bkadarsip-backend-production.up.railway.app'),
+        ],
+
         'log' => [
             'transport' => 'log',
             'channel' => env('MAIL_LOG_CHANNEL'),
@@ -33,10 +28,18 @@ return [
         'array' => [
             'transport' => 'array',
         ],
+
+        'failover' => [
+            'transport' => 'failover',
+            'mailers' => [
+                'resend',
+                'log',
+            ],
+        ],
     ],
 
     'from' => [
-        'address' => env('MAIL_FROM_ADDRESS', 'dikahadip4@gmail.com'),
+        'address' => env('MAIL_FROM_ADDRESS', 'no-reply@bkaddigitalarsip.com'),
         'name' => env('MAIL_FROM_NAME', 'BKAD Digital Archive'),
     ],
 

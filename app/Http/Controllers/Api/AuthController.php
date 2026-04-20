@@ -6,7 +6,7 @@ use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\{Hash, Validator, Mail};
 use App\Http\Controllers\Controller;
-use App\Mail\OTPMail; // SESUAIKAN DENGAN NAMA CLASS KAMU
+use App\Mail\OTPMail; 
 use Carbon\Carbon;
 
 class AuthController extends Controller {
@@ -52,14 +52,14 @@ class AuthController extends Controller {
         $user->save();
 
         try {
-            // Pemanggilan sesuai constructor: ($otp, $subjectLine)
             $subject = "Kode OTP Pemulihan Akun - BKAD Kota Bogor";
-           Mail::to($user->email)->queue(new OTPMail($otp, $subject));
+            // Tetap gunakan queue agar user tidak menunggu lama
+            Mail::to($user->email)->queue(new OTPMail($otp, $subject));
             
             return response()->json(['message' => 'Kode OTP berhasil dikirim ke email Anda']);
         } catch (\Exception $e) {
             return response()->json([
-                'message' => 'Gagal mengirim email. Periksa konfigurasi SMTP.',
+                'message' => 'Gagal mengirim email. Periksa konfigurasi.',
                 'error' => $e->getMessage()
             ], 500);
         }
@@ -100,7 +100,7 @@ class AuthController extends Controller {
         }
 
         $user->password = Hash::make($request->password);
-        $user->otp = null; // Bersihkan OTP
+        $user->otp = null; 
         $user->save();
 
         return response()->json(['message' => 'Password berhasil diubah. Silakan login.']);
