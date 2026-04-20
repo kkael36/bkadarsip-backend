@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\{Hash, Mail, DB, Storage};
 use App\Mail\OTPMail;
+use Exception;
 
 class ProfileController extends Controller {
 
@@ -18,6 +19,7 @@ class ProfileController extends Controller {
         ]);
         
         if ($request->hasFile('photo')) {
+            // Hapus foto lama jika ada
             if ($user->photo_profile) Storage::disk('public')->delete($user->photo_profile);
             $user->photo_profile = $request->file('photo')->store('profiles', 'public');
         }
@@ -26,10 +28,7 @@ class ProfileController extends Controller {
         return response()->json(['message' => 'Profil berhasil diperbarui', 'user' => $user]);
     }
 
-    // ==========================================
-    // 2. FLOW GANTI EMAIL (STRICT VERIFICATION)
-    // ==========================================
-
+    // 2. FLOW GANTI EMAIL
     public function requestEmailChange(Request $request) {
         $request->validate(['password' => 'required']);
         if (!Hash::check($request->password, $request->user()->password)) {
@@ -37,13 +36,18 @@ class ProfileController extends Controller {
         }
         
         $otp = rand(100000, 999999);
-        DB::table('pending_email_changes')->updateOrInsert(
-            ['user_id' => $request->user()->id], 
-            ['old_otp' => Hash::make($otp), 'expires_at' => now()->addMinutes(15), 'created_at' => now()]
-        );
+        try {
+            DB::table('pending_email_changes')->updateOrInsert(
+                ['user_id' => $request->user()->id], 
+                ['old_otp' => Hash::make($otp), 'expires_at' => now()->addMinutes(15), 'created_at' => now()]
+            );
 
-        Mail::to($request->user()->email)->queue(new OTPMail($otp, "OTP Perubahan Email (Lama)"));
-        return response()->json(['message' => 'Kode OTP dikirim ke email lama']);
+            // Gunakan send() bukan queue() jika worker belum siap di Railway
+            Mail::to($request->user()->email)->send(new OTPMail($otp, "OTP Perubahan Email (Lama)"));
+            return response()->json(['message' => 'Kode OTP dikirim ke email lama']);
+        } catch (Exception $e) {
+            return response()->json(['message' => 'Gagal mengirim email: ' . $e->getMessage()], 500);
+        }
     }
 
     public function verifyOldEmailOtp(Request $request) {
@@ -60,14 +64,18 @@ class ProfileController extends Controller {
         $request->validate(['new_email' => 'required|email|unique:users,email']);
         
         $newOtp = rand(100000, 999999);
-        DB::table('pending_email_changes')->where('user_id', $request->user()->id)->update([
-            'new_email' => $request->new_email, 
-            'new_otp' => Hash::make($newOtp), 
-            'expires_at' => now()->addMinutes(15)
-        ]);
+        try {
+            DB::table('pending_email_changes')->where('user_id', $request->user()->id)->update([
+                'new_email' => $request->new_email, 
+                'new_otp' => Hash::make($newOtp), 
+                'expires_at' => now()->addMinutes(15)
+            ]);
 
-        Mail::to($request->new_email)->queue(new OTPMail($newOtp, "Verifikasi Email Baru"));
-        return response()->json(['message' => 'Kode OTP dikirim ke email baru']);
+            Mail::to($request->new_email)->send(new OTPMail($newOtp, "Verifikasi Email Baru"));
+            return response()->json(['message' => 'Kode OTP dikirim ke email baru']);
+        } catch (Exception $e) {
+            return response()->json(['message' => 'Gagal mengirim email ke alamat baru'], 500);
+        }
     }
 
     public function finalizeEmailChange(Request $request) {
@@ -83,19 +91,23 @@ class ProfileController extends Controller {
         return response()->json(['message' => 'Email berhasil diperbarui', 'user' => $request->user()]);
     }
 
-    // ==========================================
-    // 3. FLOW GANTI PASSWORD (STRICT VERIFICATION)
-    // ==========================================
-
+    // 3. FLOW GANTI PASSWORD (SESUAI REQUEST KAMU)
     public function requestPasswordOtp(Request $request) {
-        $otp = rand(100000, 999999);
-        DB::table('password_reset_tokens')->updateOrInsert(
-            ['email' => $request->user()->email], 
-            ['token' => Hash::make($otp), 'created_at' => now()]
-        );
+        try {
+            $otp = rand(100000, 999999);
+            DB::table('password_reset_tokens')->updateOrInsert(
+                ['email' => $request->user()->email], 
+                ['token' => Hash::make($otp), 'created_at' => now()]
+            );
 
-        Mail::to($request->user()->email)->queue(new OTPMail($otp, "OTP Pemulihan Kata Sandi"));
-        return response()->json(['message' => 'Kode OTP telah dikirim']);
+            Mail::to($request->user()->email)->send(new OTPMail($otp, "OTP Pemulihan Kata Sandi"));
+            return response()->json(['message' => 'Kode OTP telah dikirim']);
+        } catch (Exception $e) {
+            return response()->json([
+                'message' => 'Gagal mengirim OTP. Periksa konfigurasi SMTP.',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
     public function verifyPasswordOtp(Request $request) {

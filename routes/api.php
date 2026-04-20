@@ -33,6 +33,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/boxes/{id}', [BoxController::class, 'show']);
 
     // Pengaturan Profil (Berlaku untuk akun yang sedang login)
+
+    Route::get('/profile', function (Request $request) {
+        return response()->json($request->user());
+    });
+    
     Route::post('/user/update-general', [ProfileController::class, 'updateGeneral']);
     Route::post('/user/request-email-change', [ProfileController::class, 'requestEmailChange']);
     Route::post('/user/verify-old-email-otp', [ProfileController::class, 'verifyOldEmailOtp']);
