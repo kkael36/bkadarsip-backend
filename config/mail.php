@@ -39,8 +39,8 @@ return [
     ],
 
     'from' => [
-        'address' => env('MAIL_FROM_ADDRESS', 'no-reply@bkaddigitalarsip.com'),
-        'name' => env('MAIL_FROM_NAME', 'BKAD Digital Archive'),
-    ],
+    'address' => env('MAIL_FROM_ADDRESS', 'onboarding@resend.dev'),
+    'name' => env('MAIL_FROM_NAME', 'BKAD Digital Archive'),
+],
 
 ];
