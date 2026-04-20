@@ -6,24 +6,43 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\{Hash, Mail, DB, Storage};
 use App\Mail\OTPMail;
+use CloudinaryLabs\CloudinaryLaravel\Facades\Cloudinary;
 
 class ProfileController extends Controller {
 
     // 1. UPDATE NAMA & FOTO
     public function updateGeneral(Request $request) {
         $user = $request->user();
+        
         $request->validate([
             'name' => 'required|string|max:255',
             'photo' => 'nullable|image|max:2048'
         ]);
         
         if ($request->hasFile('photo')) {
-            if ($user->photo_profile) Storage::disk('public')->delete($user->photo_profile);
-            $user->photo_profile = $request->file('photo')->store('profiles', 'public');
+            // Upload langsung ke Cloudinary
+            // getRealPath() mengambil file temporary untuk dikirim ke Cloudinary
+            $result = Cloudinary::upload($request->file('photo')->getRealPath(), [
+                'folder' => 'profiles',
+                'transformation' => [
+                    'width' => 400, 
+                    'height' => 400, 
+                    'crop' => 'fill'
+                ]
+            ]);
+
+            // PENTING: getSecurePath() menghasilkan URL https://res.cloudinary.com/...
+            // Ini yang membuat frontend kamu tidak lagi mencari ke domain Vercel/Railway lokal
+            $user->photo_profile = $result->getSecurePath();
         }
+
         $user->name = $request->name;
         $user->save();
-        return response()->json(['message' => 'Profil berhasil diperbarui', 'user' => $user]);
+
+        return response()->json([
+            'message' => 'Profil berhasil diperbarui', 
+            'user' => $user
+        ]);
     }
 
     // 2. FLOW GANTI EMAIL

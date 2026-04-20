@@ -37,15 +37,16 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/profile', function (Request $request) {
         return response()->json($request->user());
     });
-    
+
+   // Pengaturan Profil
     Route::post('/user/update-general', [ProfileController::class, 'updateGeneral']);
     Route::post('/user/request-email-change', [ProfileController::class, 'requestEmailChange']);
     Route::post('/user/verify-old-email-otp', [ProfileController::class, 'verifyOldEmailOtp']);
     Route::post('/user/request-new-email-otp', [ProfileController::class, 'requestNewEmailOtp']);
     Route::post('/user/finalize-email', [ProfileController::class, 'finalizeEmailChange']);
     
-   Route::post('/user/request-password-otp', [ProfileController::class, 'requestPasswordOtp']);
-
+    // Ganti Password (Pemicu Error 500 jika gagal email)
+    Route::post('/user/request-password-otp', [ProfileController::class, 'requestPasswordOtp']);
     Route::post('/user/verify-password-otp', [ProfileController::class, 'verifyPasswordOtp']);
     Route::post('/user/update-password', [ProfileController::class, 'updatePassword']);
 

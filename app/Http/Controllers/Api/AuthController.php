@@ -53,7 +53,6 @@ class AuthController extends Controller {
 
         try {
             $subject = "Kode OTP Pemulihan Akun - BKAD Kota Bogor";
-            // Tetap gunakan queue agar user tidak menunggu lama
             Mail::to($user->email)->queue(new OTPMail($otp, $subject));
             
             return response()->json(['message' => 'Kode OTP berhasil dikirim ke email Anda']);
