@@ -5,7 +5,8 @@ return [
     'default' => env('MAIL_MAILER', 'smtp'),
 
     'mailers' => [
-        'smtp' => [
+        
+       'smtp' => [
     'transport' => 'smtp',
     'host' => env('MAIL_HOST', 'smtp.gmail.com'),
     'port' => env('MAIL_PORT', 587),
@@ -13,7 +14,7 @@ return [
     'username' => env('MAIL_USERNAME'),
     'password' => env('MAIL_PASSWORD'),
     'timeout' => 60,
-    // TAMBAHKAN INI DI BAWAH TIMEOUT
+    'local_domain' => env('MAIL_EHLO_DOMAIN', 'bkadarsip-backend-production.up.railway.app'),
     'stream' => [
         'ssl' => [
             'allow_self_signed' => true,
@@ -21,9 +22,7 @@ return [
             'verify_peer_name' => false,
         ],
     ],
-
-           'local_domain' => env('MAIL_EHLO_DOMAIN', 'bkadarsip-backend-production.up.railway.app'),
-        ],
+],
 
         // Mailer lainnya biarkan standar...
         'log' => [
