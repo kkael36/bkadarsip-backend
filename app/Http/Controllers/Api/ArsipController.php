@@ -10,29 +10,6 @@ use CURLFile;
 
 class ArsipController extends Controller
 {
-    private $cloudName;
-    private $apiKey;
-    private $apiSecret;
-
-    public function __construct()
-    {
-        // SEMUA dari environment variable Railway
-        $this->cloudName = env('CLOUDINARY_CLOUD_NAME');
-        $this->apiKey = env('CLOUDINARY_API_KEY');
-        $this->apiSecret = env('CLOUDINARY_API_SECRET');
-        
-        // Log warning jika ada yang kosong
-        if (empty($this->cloudName)) {
-            Log::warning('CLOUDINARY_CLOUD_NAME tidak diset di Railway');
-        }
-        if (empty($this->apiKey)) {
-            Log::warning('CLOUDINARY_API_KEY tidak diset di Railway');
-        }
-        if (empty($this->apiSecret)) {
-            Log::warning('CLOUDINARY_API_SECRET tidak diset di Railway');
-        }
-    }
-
     public function index() {
         return response()->json(ArsipSp2d::orderBy('created_at', 'desc')->get());
     }
@@ -92,20 +69,26 @@ class ArsipController extends Controller
             $realPath = $file->getRealPath();
             Log::info("File diterima: " . $file->getClientOriginalName());
 
-            // 1. Upload ke Cloudinary (pakai credential dari env)
+            // 1. Upload ke Cloudinary (konfigurasi hardcoded seperti ProfileController)
             Log::info("Upload ke Cloudinary...");
+            $cloudName = 'dswy4tagj';
+            $apiKey = '877393947668591';
+            $apiSecret = 'h-EXj0-IhNHx2zKBuNXVwNbPeWI';
             $folder = 'sp2d_arsip';
             $timestamp = time();
-            $signature = sha1("folder={$folder}&timestamp={$timestamp}" . $this->apiSecret);
             
+            // Generate signature
+            $signature = sha1("folder={$folder}&timestamp={$timestamp}" . $apiSecret);
+            
+            // Upload dengan cURL
             $ch = curl_init();
-            curl_setopt($ch, CURLOPT_URL, "https://api.cloudinary.com/v1_1/{$this->cloudName}/image/upload");
-            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_URL, "https://api.cloudinary.com/v1_1/{$cloudName}/image/upload");
+            curl_setopt($ch, CURLOPT_POST, 1);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_TIMEOUT, 30);
             curl_setopt($ch, CURLOPT_POSTFIELDS, [
                 'file' => new CURLFile($realPath, $file->getMimeType(), $file->getClientOriginalName()),
-                'api_key' => $this->apiKey,
+                'api_key' => $apiKey,
                 'timestamp' => $timestamp,
                 'folder' => $folder,
                 'signature' => $signature,
@@ -123,7 +106,7 @@ class ArsipController extends Controller
             $secureUrl = $dataCloud['secure_url'];
             Log::info("Upload Cloudinary berhasil: " . $secureUrl);
 
-            // 2. OCR dengan endpoint PUBLIC (tanpa token)
+            // 2. OCR dengan endpoint PUBLIC
             Log::info("Memulai OCR dengan endpoint public...");
             $textMentah = $this->doOCRWithPublicEndpoint($realPath);
             
@@ -328,26 +311,45 @@ class ArsipController extends Controller
         return $res;
     }
 
+    // Helper function untuk extract public_id dari URL Cloudinary (sama dengan ProfileController)
     private function extractPublicIdFromUrl($url) {
-        preg_match('/\/upload\/v\d+\/(.+)\.(jpg|jpeg|png|gif|webp)/', $url, $m);
-        return $m[1] ?? null;
+        // URL pattern: https://res.cloudinary.com/cloud_name/image/upload/v1234567890/folder/filename.jpg
+        preg_match('/\/upload\/v\d+\/(.+)\.(jpg|jpeg|png|gif|webp)/', $url, $matches);
+        return $matches[1] ?? null;
     }
 
+    // Helper function untuk hapus dari Cloudinary (sama dengan ProfileController)
     private function deleteFromCloudinary($publicId) {
+        $cloudName = 'dswy4tagj';
+        $apiKey = '877393947668591';
+        $apiSecret = 'h-EXj0-IhNHx2zKBuNXVwNbPeWI';
         $timestamp = time();
-        $sig = sha1("public_id={$publicId}&timestamp={$timestamp}" . $this->apiSecret);
+        
+        $signature = sha1("public_id={$publicId}&timestamp={$timestamp}" . $apiSecret);
+        
         $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, "https://api.cloudinary.com/v1_1/{$this->cloudName}/image/destroy");
+        curl_setopt($ch, CURLOPT_URL, "https://api.cloudinary.com/v1_1/{$cloudName}/image/destroy");
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, [
-            'public_id' => $publicId, 
-            'api_key' => $this->apiKey, 
-            'timestamp' => $timestamp, 
-            'signature' => $sig
+            'public_id' => $publicId,
+            'api_key' => $apiKey,
+            'timestamp' => $timestamp,
+            'signature' => $signature,
         ]);
-        $result = curl_exec($ch);
-        Log::info("Delete Cloudinary result: " . $result);
+        
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
+        
+        if ($httpCode == 200) {
+            $result = json_decode($response, true);
+            if ($result['result'] == 'ok') {
+                Log::info('File deleted from Cloudinary: ' . $publicId);
+            }
+            return $result;
+        }
+        
+        return null;
     }
 }
