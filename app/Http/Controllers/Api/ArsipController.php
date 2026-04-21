@@ -193,8 +193,6 @@ class ArsipController extends Controller
             curl_setopt($ch, CURLOPT_TIMEOUT, 60);
             curl_setopt($ch, CURLOPT_POSTFIELDS, ['file' => $fileData]);
             
-            // TIDAK PAKAI AUTHORIZATION HEADER (karena public)
-            
             $response = curl_exec($ch);
             $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             $error = curl_error($ch);
@@ -211,11 +209,11 @@ class ArsipController extends Controller
                 $decoded = json_decode($response, true);
                 Log::info("Response: " . json_encode($decoded));
                 
-                // Sesuaikan dengan format response dari endpoint public
-                if (isset($decoded['text'])) {
-                    return $decoded['text'];
-                } elseif (isset($decoded['teks'])) {
+                // Format response dari endpoint public menggunakan field 'teks'
+                if (isset($decoded['teks'])) {
                     return $decoded['teks'];
+                } elseif (isset($decoded['text'])) {
+                    return $decoded['text'];
                 } elseif (isset($decoded['result'])) {
                     return $decoded['result'];
                 } elseif (isset($decoded['data'])) {
@@ -248,14 +246,21 @@ class ArsipController extends Controller
             return $res;
         }
 
+        // Bersihkan teks: replace newline dengan spasi, hapus multiple spaces
         $text = preg_replace('/\s+/', ' ', $text);
-        Log::info("Parsing text: " . substr($text, 0, 300));
+        Log::info("Parsing text: " . substr($text, 0, 500));
 
-        // Pattern untuk No Surat
+        // ==================== 1. PARSING NO SURAT ====================
+        // Format OCR: "N0M0R:931/001302/15/2013" atau "NOMOR:931/001302/LS/2013"
         $patterns = [
-            '/Nomor\s*[:;]?\s*(\d{3})\/(\d{6})\/([A-Z]{2})\/(\d{4})/i',
-            '/(\d{3})\/(\d{6})\/([A-Z]{2})\/(\d{4})/i',
-            '/(\d{3})\/(\d{4,8})\/([A-Z]{2,3})\/(\d{4})/i',
+            // Pattern untuk format "N0M0R:931/001302/15/2013" (angka 0 bukan huruf O)
+            '/(?:N0M0R|NOMOR|No\.?)\s*[:;]?\s*(\d{3})\/(\d{6})\/(\d{2,3})\/(\d{4})/i',
+            // Pattern untuk format "931/001302/LS/2013" (huruf)
+            '/(?:N0M0R|NOMOR|No\.?)\s*[:;]?\s*(\d{3})\/(\d{6})\/([A-Z]{2,3})\/(\d{4})/i',
+            // Pattern tanpa label "NOMOR"
+            '/(\d{3})\/(\d{6})\/(\d{2,3})\/(\d{4})/i',
+            '/(\d{3})\/(\d{6})\/([A-Z]{2,3})\/(\d{4})/i',
+            '/(\d{3})\/(\d{4,8})\/([A-Z0-9]{2,3})\/(\d{4})/i',
         ];
         
         foreach ($patterns as $pattern) {
@@ -263,20 +268,61 @@ class ArsipController extends Controller
                 $res["kode_klas"] = $m[1];
                 $res["no_surat"] = "{$m[1]}/{$m[2]}/" . strtoupper($m[3]) . "/{$m[4]}";
                 $res["tahun"] = $m[4];
+                Log::info("No Surat ditemukan: " . $res["no_surat"]);
                 break;
             }
         }
 
-        // Cari Keperluan
-        if (preg_match('/Keperluan\s*[:;]?\s*(.*?)(?=Kegiatan|No\.|Rp|$)/is', $text, $m)) {
-            $res["keperluan"] = trim(preg_replace('/\s+/', ' ', $m[1]));
+        // Backup cari tahun jika no surat tidak ditemukan
+        if (empty($res["tahun"])) {
+            if (preg_match('/(20[0-9]{2})/', $text, $m)) {
+                $res["tahun"] = $m[1];
+                Log::info("Tahun ditemukan dari backup: " . $res["tahun"]);
+            }
         }
 
-        // Cari Nominal
-        if (preg_match('/Uang sebesar Rp\s*([\d\.]+)/i', $text, $m)) {
-            $res["nominal"] = "Rp " . $m[1];
-        } elseif (preg_match('/(?:Rp|Rupiah)\s*([\d\.\,]+)/i', $text, $m)) {
-            $res["nominal"] = "Rp " . $m[1];
+        // ==================== 2. PARSING KEPERLUAN ====================
+        // Format OCR: "KEPERLUAN:PEMBAYARAN PENGADAAN KURS KERO SEKSUAL..."
+        $keperluanPatterns = [
+            '/KEPERLUAN\s*[:;]?\s*(.*?)(?=KEGIATAN|No\.|Rp|JUMLAH|$)/is',
+            '/Keperluan\s*[:;]?\s*(.*?)(?=Kegiatan|No\.|Rp|Jumlah|$)/is',
+            '/PEMBAYARAN\s*[:;]?\s*(.*?)(?=KEGIATAN|No\.|Rp|JUMLAH|$)/is',
+            '/Untuk\s*[:;]?\s*(.*?)(?=Kegiatan|No\.|Rp|$)/is',
+        ];
+        
+        foreach ($keperluanPatterns as $pattern) {
+            if (preg_match($pattern, $text, $m)) {
+                $keperluanText = trim(preg_replace('/\s+/', ' ', $m[1]));
+                if (strlen($keperluanText) > 5 && strlen($keperluanText) < 500) {
+                    $res["keperluan"] = $keperluanText;
+                    Log::info("Keperluan ditemukan: " . $res["keperluan"]);
+                    break;
+                }
+            }
+        }
+
+        // ==================== 3. PARSING NOMINAL ====================
+        // Format OCR: "UANG SEBESAR RP 32.997.500" atau "JUMLAH YANG DLBEYARKAN RP. 32.997.500"
+        $nominalPatterns = [
+            '/UANG SEBESAR RP\s*([\d\.]+)/i',
+            '/UANG SEBESAR RP\.?\s*([\d\.]+)/i',
+            '/JUMLAH YANG DLBEYARKAN\s*RP\.?\s*([\d\.]+)/i',
+            '/JUMLAH YANG DIBAYARKAN\s*RP\.?\s*([\d\.]+)/i',
+            '/Uang sebesar Rp\s*([\d\.]+)/i',
+            '/(?:Rp|Rupiah|RP\.?)\s*[:;]?\s*([\d\.\,]{5,})/i',
+        ];
+        
+        foreach ($nominalPatterns as $pattern) {
+            if (preg_match($pattern, $text, $m)) {
+                $nominal = trim($m[1]);
+                // Bersihkan titik sebagai pemisah ribuan
+                $numericNominal = (int) str_replace('.', '', $nominal);
+                if ($numericNominal >= 10000) {
+                    $res["nominal"] = "Rp " . $nominal;
+                    Log::info("Nominal ditemukan: " . $res["nominal"]);
+                    break;
+                }
+            }
         }
 
         return $res;
