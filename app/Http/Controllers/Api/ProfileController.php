@@ -6,11 +6,11 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\{Hash, Mail, DB, Storage};
 use App\Mail\OTPMail;
-use CloudinaryLabs\CloudinaryLaravel\Facades\Cloudinary;
+//use Cloudinary\Cloudinary;
 
 class ProfileController extends Controller {
 
-   public function updateGeneral(Request $request) {
+  public function updateGeneral(Request $request) {
     $user = $request->user();
     
     $request->validate([
@@ -24,15 +24,43 @@ class ProfileController extends Controller {
         try {
             $file = $request->file('photo');
             
-            // ✅ Cara dengan Cloudinary facade
-            $result = Cloudinary::upload($file->getRealPath(), [
-                'folder' => 'profiles'
+            // Konfigurasi Cloudinary
+            $cloudName = 'dswy4tagj';
+            $apiKey = '877393947668591';
+            $apiSecret = 'h-EXj0-IhNHx2zKBuNXVwNbPeWI';
+            $folder = 'profiles';
+            $timestamp = time();
+            
+            // Generate signature
+            $signature = sha1("folder={$folder}&timestamp={$timestamp}" . $apiSecret);
+            
+            // Upload dengan cURL
+            $ch = curl_init();
+            curl_setopt($ch, CURLOPT_URL, "https://api.cloudinary.com/v1_1/{$cloudName}/image/upload");
+            curl_setopt($ch, CURLOPT_POST, 1);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, [
+                'file' => new CURLFile($file->getRealPath(), $file->getMimeType(), $file->getClientOriginalName()),
+                'api_key' => $apiKey,
+                'timestamp' => $timestamp,
+                'folder' => $folder,
+                'signature' => $signature,
             ]);
             
-            $user->photo_profile = $result->getSecurePath();
+            $response = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+            
+            if ($httpCode != 200) {
+                $error = json_decode($response, true);
+                throw new \Exception($error['error']['message'] ?? 'Upload failed');
+            }
+            
+            $result = json_decode($response, true);
+            $user->photo_profile = $result['secure_url'];
             
         } catch (\Exception $e) {
-            \Log::error('Cloudinary Error: ' . $e->getMessage());
+            \Log::error('Upload Error: ' . $e->getMessage());
             return response()->json([
                 'message' => 'Upload foto gagal: ' . $e->getMessage()
             ], 500);
