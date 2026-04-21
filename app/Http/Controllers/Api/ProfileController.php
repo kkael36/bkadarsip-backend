@@ -4,226 +4,250 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\{Hash, Mail, DB, Storage};
-use App\Mail\OTPMail;
+use App\Models\ArsipSp2d;
+use Illuminate\Support\Facades\{Log, Storage, Validator, DB};
 use CURLFile;
-//use Cloudinary\Cloudinary;
 
-class ProfileController extends Controller {
+class ArsipController extends Controller
+{
+    // Konfigurasi Cloudinary (Sesuai ProfileController kamu)
+    private $cloudName = 'dswy4tagj';
+    private $apiKey = '877393947668591';
+    private $apiSecret = 'h-EXj0-IhNHx2zKBuNXVwNbPeWI';
 
-    public function updateGeneral(Request $request) {
-    $user = $request->user();
-    
-    // Validasi dengan pesan error kustom
-    $request->validate([
-        'name' => 'required|string|max:255',
-        'photo' => 'nullable|image|mimes:jpg,jpeg,png,gif,webp|max:5120'
-    ], [
-        'name.required' => 'Nama tidak boleh kosong.',
-        'photo.image' => 'File harus berupa gambar.',
-        'photo.mimes' => 'Format file tidak didukung. Gunakan: JPG, JPEG, PNG, GIF, atau WEBP.',
-        'photo.max' => 'Ukuran file terlalu besar. Maksimal 5 MB.'
-    ]);
-    
-    $user->name = $request->name;
-    
-    if ($request->hasFile('photo')) {
-        $file = $request->file('photo');
+    public function index() {
+        return response()->json(ArsipSp2d::orderBy('created_at', 'desc')->get());
+    }
+
+    public function show($id) {
+        return response()->json(["success" => true, "data" => ArsipSp2d::findOrFail($id)]);
+    }
+
+    /**
+     * 🔥 Hapus file dari Cloudinary jika dibatalkan/expired di React
+     */
+    public function destroyTemp(Request $request) {
+        $url = $request->filename; // React mengirimkan URL lengkap Cloudinary
         
-        try {
-            // 🔥 HAPUS FOTO LAMA JIKA ADA
-            if ($user->photo_profile) {
-                $oldPublicId = $this->extractPublicIdFromUrl($user->photo_profile);
-                if ($oldPublicId) {
-                    $this->deleteFromCloudinary($oldPublicId);
-                }
+        if ($url) {
+            $publicId = $this->extractPublicIdFromUrl($url);
+            if ($publicId) {
+                $this->deleteFromCloudinary($publicId);
+                return response()->json([
+                    "success" => true, 
+                    "message" => "File di Cloudinary berhasil dihapus."
+                ]);
             }
+        }
+
+        return response()->json(["success" => false, "message" => "File tidak ditemukan."], 404);
+    }
+
+    public function store(Request $request) {
+        $data = $request->all();
+        
+        if (!empty($data['nominal'])) {
+            $data['nominal'] = preg_replace('/[^0-9]/', '', $data['nominal']);
+        } else {
+            $data['nominal'] = 0;
+        }
+
+        $validator = Validator::make($data, [
+            'kode_klas' => 'required|string',
+            'no_surat' => 'required|string',
+            'keperluan' => 'required|string',
+            'tahun' => 'required|numeric|digits:4',
+            'jumlah' => 'required|string',
+            'nominal' => 'required|numeric',
+            'jra_aktif' => 'required|numeric',
+            'jra_inaktif' => 'required|numeric',
+            'unit_pencipta' => 'required|string',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
+        }
+
+        $arsip = ArsipSp2d::create($data);
+        return response()->json(["success" => true, "data" => $arsip]);
+    }
+
+    public function update(Request $request, $id) {
+        $arsip = ArsipSp2d::findOrFail($id);
+        $data = $request->all();
+        
+        if (!empty($data['nominal'])) {
+            $data['nominal'] = preg_replace('/[^0-9]/', '', $data['nominal']);
+        }
+
+        $validator = Validator::make($data, [
+            'kode_klas' => 'required|string',
+            'no_surat' => 'required|string',
+            'keperluan' => 'required|string',
+            'tahun' => 'required|numeric|digits:4',
+            'jumlah' => 'required|string',
+            'nominal' => 'required|numeric',
+            'jra_aktif' => 'required|numeric',
+            'jra_inaktif' => 'required|numeric',
+            'unit_pencipta' => 'required|string',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
+        }
+
+        $arsip->update($data);
+        return response()->json(["success" => true, "data" => $arsip]);
+    }
+
+    public function destroy($id) {
+        $arsip = ArsipSp2d::findOrFail($id);
+        if ($arsip->file_dokumen) {
+            $publicId = $this->extractPublicIdFromUrl($arsip->file_dokumen);
+            if ($publicId) {
+                $this->deleteFromCloudinary($publicId);
+            }
+        }
+        $arsip->delete();
+        return response()->json(["success" => true]);
+    }
+
+    /**
+     * 🔥 UPLOAD KE CLOUDINARY & JALANKAN OCR
+     */
+    public function upload(Request $request)
+    {
+        try {
+            if (!$request->hasFile('file')) {
+                return response()->json(["success" => false, "error" => "file tidak ditemukan"], 400);
+            }
+
+            $file = $request->file('file');
             
-            // Konfigurasi Cloudinary
-            $cloudName = 'dswy4tagj';
-            $apiKey = '877393947668591';
-            $apiSecret = 'h-EXj0-IhNHx2zKBuNXVwNbPeWI';
-            $folder = 'profiles';
+            // 1. Persiapan Upload Cloudinary
+            $folder = 'sp2d_arsip';
             $timestamp = time();
+            $signature = sha1("folder={$folder}&timestamp={$timestamp}" . $this->apiSecret);
             
-            // Generate signature
-            $signature = sha1("folder={$folder}&timestamp={$timestamp}" . $apiSecret);
-            
-            // Upload dengan cURL
             $ch = curl_init();
-            curl_setopt($ch, CURLOPT_URL, "https://api.cloudinary.com/v1_1/{$cloudName}/image/upload");
+            curl_setopt($ch, CURLOPT_URL, "https://api.cloudinary.com/v1_1/{$this->cloudName}/image/upload");
             curl_setopt($ch, CURLOPT_POST, 1);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_POSTFIELDS, [
                 'file' => new CURLFile($file->getRealPath(), $file->getMimeType(), $file->getClientOriginalName()),
-                'api_key' => $apiKey,
+                'api_key' => $this->apiKey,
                 'timestamp' => $timestamp,
                 'folder' => $folder,
                 'signature' => $signature,
             ]);
             
-            $response = curl_exec($ch);
-            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $responseCloud = curl_exec($ch);
+            $httpCodeCloud = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             curl_close($ch);
             
-            if ($httpCode != 200) {
-                $error = json_decode($response, true);
-                throw new \Exception($error['error']['message'] ?? 'Upload failed');
+            if ($httpCodeCloud != 200) {
+                $error = json_decode($responseCloud, true);
+                throw new \Exception('Cloudinary Upload Failed: ' . ($error['error']['message'] ?? 'Unknown Error'));
             }
             
-            $result = json_decode($response, true);
-            $user->photo_profile = $result['secure_url'];
+            $resultCloud = json_decode($responseCloud, true);
+            $secureUrl = $resultCloud['secure_url'];
+
+            // 2. Jalankan OCR ke Hugging Face menggunakan path lokal sementara
+            $ocr = $this->doOCR($file->getRealPath());
+            $full_text_mentahan = $ocr['teks'] ?? "";
             
-        } catch (\Exception $e) {
-            \Log::error('Upload Error: ' . $e->getMessage());
+            // 3. Parsing Data
+            $parsedData = $this->parseDataDariFullText($full_text_mentahan);
+
             return response()->json([
-                'message' => 'Upload foto gagal: ' . $e->getMessage()
-            ], 422);
+                "success" => true,
+                "file_dokumen" => $secureUrl, // URL Cloudinary
+                "kode_klas" => $parsedData['kode_klas'],
+                "no_surat" => $parsedData['no_surat'],
+                "tahun" => $parsedData['tahun'],
+                "nominal" => $parsedData['nominal'],
+                "keperluan" => $parsedData['keperluan']
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error("UPLOAD/OCR ERROR: " . $e->getMessage());
+            return response()->json(["success" => false, "error" => $e->getMessage()], 500);
         }
     }
-    
-    $user->save();
-    
-    return response()->json([
-        'message' => 'Profil berhasil diperbarui', 
-        'user' => $user
-    ]);
-}
 
-    // Helper function untuk extract public_id dari URL Cloudinary
+    private function doOCR($imagePath)
+    {
+        $url = "https://albedoes-ocr-bkad.hf.space/ocr"; 
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 150); 
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 60);
+
+        curl_setopt($ch, CURLOPT_POSTFIELDS, [
+            "file" => new \CURLFile($imagePath)
+        ]);
+
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        return ($httpCode === 200) ? json_decode($response, true) : ["teks" => ""];
+    }
+
+    private function parseDataDariFullText($text)
+    {
+        $result = ["kode_klas" => "", "no_surat" => "", "tahun" => "", "keperluan" => "", "nominal" => ""];
+
+        // Regex fleksibel untuk nomor surat
+        if (preg_match('/([0-9]{3})[\/|lI1\\-]\s*([0-9]{4,8})[\/|lI1\\-]\s*([A-Z]{2})[\/|lI1\\-]\s*(20[0-9]{2})/i', $text, $match)) {
+            $result["kode_klas"] = $match[1];
+            $result["no_surat"] = $match[1] . '/' . $match[2] . '/' . strtoupper($match[3]) . '/' . $match[4];
+            $result["tahun"] = $match[4];
+        }
+
+        if (preg_match('/(?:Keperluan|Pembayaran)\s*[:;]?\s*(.*?)(?=Kegiatan|No\.\s*REKENING|JUMLAH|Rp|$)/is', $text, $match)) {
+            $result["keperluan"] = "SP2D " . trim(preg_replace('/\s+/', ' ', $match[1]));
+        }
+
+        if (preg_match_all('/(?:Rp\.?|Rp|R\.)\s*([\d\.\,]{5,})/i', $text, $matches)) {
+            $angka_terbesar = 0;
+            foreach ($matches[1] as $nominal_str) {
+                $clean_num = preg_replace('/[^0-9]/', '', preg_replace('/\,.*$/', '', $nominal_str));
+                $val = (int) $clean_num;
+                if ($val > $angka_terbesar) $angka_terbesar = $val;
+            }
+            if ($angka_terbesar > 0) $result["nominal"] = "Rp. " . number_format($angka_terbesar, 0, ',', '.');
+        }
+
+        return $result;
+    }
+
+    // Helper: Extract public_id dari URL Cloudinary
     private function extractPublicIdFromUrl($url) {
-        // URL pattern: https://res.cloudinary.com/cloud_name/image/upload/v1234567890/folder/filename.jpg
         preg_match('/\/upload\/v\d+\/(.+)\.(jpg|jpeg|png|gif|webp)/', $url, $matches);
         return $matches[1] ?? null;
     }
 
-    // Helper function untuk hapus dari Cloudinary
+    // Helper: Hapus dari Cloudinary
     private function deleteFromCloudinary($publicId) {
-        $cloudName = 'dswy4tagj';
-        $apiKey = '877393947668591';
-        $apiSecret = 'h-EXj0-IhNHx2zKBuNXVwNbPeWI';
         $timestamp = time();
-        
-        $signature = sha1("public_id={$publicId}&timestamp={$timestamp}" . $apiSecret);
+        $signature = sha1("public_id={$publicId}&timestamp={$timestamp}" . $this->apiSecret);
         
         $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, "https://api.cloudinary.com/v1_1/{$cloudName}/image/destroy");
+        curl_setopt($ch, CURLOPT_URL, "https://api.cloudinary.com/v1_1/{$this->cloudName}/image/destroy");
         curl_setopt($ch, CURLOPT_POST, 1);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, [
             'public_id' => $publicId,
-            'api_key' => $apiKey,
+            'api_key' => $this->apiKey,
             'timestamp' => $timestamp,
             'signature' => $signature,
         ]);
-        
         $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
-        
-        if ($httpCode == 200) {
-            $result = json_decode($response, true);
-            if ($result['result'] == 'ok') {
-                \Log::info('Old photo deleted from Cloudinary: ' . $publicId);
-            }
-            return $result;
-        }
-        
-        return null;
-    }
-
-    // 2. FLOW GANTI EMAIL
-    public function requestEmailChange(Request $request) {
-        $request->validate(['password' => 'required']);
-        if (!Hash::check($request->password, $request->user()->password)) {
-            return response()->json(['message' => 'Kata sandi akun salah'], 403);
-        }
-        
-        $otp = rand(100000, 999999);
-        try {
-            DB::table('pending_email_changes')->updateOrInsert(
-                ['user_id' => $request->user()->id], 
-                ['old_otp' => Hash::make($otp), 'expires_at' => now()->addMinutes(15), 'created_at' => now()]
-            );
-
-            Mail::to($request->user()->email)->queue(new OTPMail($otp, "OTP Perubahan Email (Lama)"));
-            return response()->json(['message' => 'Kode OTP dikirim ke email lama']);
-        } catch (\Exception $e) {
-            return response()->json(['message' => 'Gagal memproses antrean', 'error' => $e->getMessage()], 500);
-        }
-    }
-
-    public function verifyOldEmailOtp(Request $request) {
-        $request->validate(['otp_old' => 'required']);
-        $pending = DB::table('pending_email_changes')->where('user_id', $request->user()->id)->first();
-        
-        if (!$pending || !Hash::check($request->otp_old, $pending->old_otp)) {
-            return response()->json(['message' => 'Kode OTP salah atau telah kadaluarsa'], 403);
-        }
-        return response()->json(['message' => 'Verifikasi berhasil']);
-    }
-
-    public function requestNewEmailOtp(Request $request) {
-        $request->validate(['new_email' => 'required|email|unique:users,email']);
-        
-        $newOtp = rand(100000, 999999);
-        try {
-            DB::table('pending_email_changes')->where('user_id', $request->user()->id)->update([
-                'new_email' => $request->new_email, 
-                'new_otp' => Hash::make($newOtp), 
-                'expires_at' => now()->addMinutes(15)
-            ]);
-
-            Mail::to($request->new_email)->queue(new OTPMail($newOtp, "Verifikasi Email Baru"));
-            return response()->json(['message' => 'Kode OTP dikirim ke email baru']);
-        } catch (\Exception $e) {
-            return response()->json(['message' => 'Gagal memproses antrean'], 500);
-        }
-    }
-
-    public function finalizeEmailChange(Request $request) {
-        $request->validate(['otp_new' => 'required']);
-        $pending = DB::table('pending_email_changes')->where('user_id', $request->user()->id)->first();
-        
-        if (!$pending || !Hash::check($request->otp_new, $pending->new_otp)) {
-            return response()->json(['message' => 'Kode verifikasi email baru salah'], 403);
-        }
-
-        $request->user()->update(['email' => $pending->new_email]);
-        DB::table('pending_email_changes')->where('user_id', $request->user()->id)->delete();
-        return response()->json(['message' => 'Email berhasil diperbarui', 'user' => $request->user()]);
-    }
-
-    // 3. FLOW GANTI PASSWORD
-    public function requestPasswordOtp(Request $request) {
-        try {
-            $otp = rand(100000, 999999);
-            DB::table('password_reset_tokens')->updateOrInsert(
-                ['email' => $request->user()->email], 
-                ['token' => Hash::make($otp), 'created_at' => now()]
-            );
-
-            Mail::to($request->user()->email)->queue(new OTPMail($otp, "OTP Pemulihan Kata Sandi"));
-            return response()->json(['message' => 'Kode OTP telah dikirim']);
-        } catch (\Exception $e) {
-            return response()->json(['message' => 'Gagal memproses antrean'], 500);
-        }
-    }
-
-    public function verifyPasswordOtp(Request $request) {
-        $request->validate(['otp' => 'required']);
-        $reset = DB::table('password_reset_tokens')->where('email', $request->user()->email)->first();
-        
-        if (!$reset || !Hash::check($request->otp, $reset->token)) {
-            return response()->json(['message' => 'Kode OTP tidak valid'], 403);
-        }
-        return response()->json(['message' => 'Verifikasi berhasil']);
-    }
-
-    public function updatePassword(Request $request) {
-        $request->validate(['password' => 'required|min:8|confirmed']);
-        $request->user()->update(['password' => Hash::make($request->password)]);
-        DB::table('password_reset_tokens')->where('email', $request->user()->email)->delete();
-        return response()->json(['message' => 'Kata sandi berhasil diperbarui']);
+        return json_decode($response, true);
     }
 }
