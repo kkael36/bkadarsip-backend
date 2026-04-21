@@ -10,21 +10,22 @@ class AppServiceProvider extends ServiceProvider
 {
     public function register(): void { }
 
-    public function boot(): void
-    {
-        // 1. Paksa HTTPS agar tidak terjadi redirect POST ke GET (Fix 405)
-        if (config('app.env') !== 'local') {
-            URL::forceScheme('https');
-        }
-
-        // 2. Paksa Config Cloudinary (Fix Error "Undefined array key cloud")
-        // Ini adalah cara paling ampuh jika file config/cloudinary.php tidak terbaca
-        if (!config()->has('cloudinary.cloud')) {
-            Config::set('cloudinary.cloud', [
-                'cloud_name' => env('CLOUDINARY_CLOUD_NAME'),
-                'api_key'    => env('CLOUDINARY_API_KEY'),
-                'api_secret' => env('CLOUDINARY_API_SECRET'),
-            ]);
-        }
+   public function boot(): void
+{
+    // 1. Paksa HTTPS (Penting agar tidak 405)
+    if (config('app.env') !== 'local') {
+        \Illuminate\Support\Facades\URL::forceScheme('https');
     }
+
+    // 2. JURUS PAMUNGKAS: Paksa Config Cloudinary ke dalam sistem
+    // Kita tidak pakai env() di sini agar datanya 'mati' terkunci di sistem
+    config([
+        'cloudinary.cloud' => [
+            'cloud_name' => 'dswy4tagj',
+            'api_key'    => '877393947668591',
+            'api_secret' => 'h-EXj0-IhNHx2zKBuNXVwNbPeWI',
+        ],
+        'cloudinary.cloud_url' => 'cloudinary://877393947668591:h-EXj0-IhNHx2zKBuNXVwNbPeWI@dswy4tagj',
+    ]);
+}
 }
