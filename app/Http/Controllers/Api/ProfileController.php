@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\{Hash, Mail, DB, Storage};
 use App\Mail\OTPMail;
+use CURLFile;
 //use Cloudinary\Cloudinary;
 
 class ProfileController extends Controller {
