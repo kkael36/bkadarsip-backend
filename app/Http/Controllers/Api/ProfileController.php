@@ -10,36 +10,41 @@ use CloudinaryLabs\CloudinaryLaravel\Facades\Cloudinary;
 
 class ProfileController extends Controller {
 
-    // 1. UPDATE NAMA & FOTO
-    public function updateGeneral(Request $request) {
+   public function updateGeneral(Request $request) {
     $user = $request->user();
     
     $request->validate([
         'name' => 'required|string|max:255',
-        'photo' => 'nullable|image'
+        'photo' => 'nullable|image|max:5120'
     ]);
+    
+    $user->name = $request->name;
     
     if ($request->hasFile('photo')) {
         try {
             $file = $request->file('photo');
             
-            // ✅ CARA YANG BENAR UNTUK LARAVEL
+            // ✅ Cara dengan Cloudinary facade
             $result = Cloudinary::upload($file->getRealPath(), [
                 'folder' => 'profiles'
             ]);
-
+            
             $user->photo_profile = $result->getSecurePath();
+            
         } catch (\Exception $e) {
+            \Log::error('Cloudinary Error: ' . $e->getMessage());
             return response()->json([
-                'message' => 'Cloudinary Error: ' . $e->getMessage()
+                'message' => 'Upload foto gagal: ' . $e->getMessage()
             ], 500);
         }
     }
-
-    $user->name = $request->name;
+    
     $user->save();
-
-    return response()->json(['message' => 'Profil berhasil diperbarui', 'user' => $user]);
+    
+    return response()->json([
+        'message' => 'Profil berhasil diperbarui', 
+        'user' => $user
+    ]);
 }
 
     // 2. FLOW GANTI EMAIL
