@@ -12,91 +12,83 @@ use CURLFile;
 class ProfileController extends Controller {
 
     public function updateGeneral(Request $request) {
-        $user = $request->user();
+    $user = $request->user();
+    
+    // Validasi dengan pesan error kustom
+    $request->validate([
+        'name' => 'required|string|max:255',
+        'photo' => 'nullable|image|mimes:jpg,jpeg,png,gif,webp|max:5120'
+    ], [
+        'name.required' => 'Nama tidak boleh kosong.',
+        'photo.image' => 'File harus berupa gambar.',
+        'photo.mimes' => 'Format file tidak didukung. Gunakan: JPG, JPEG, PNG, GIF, atau WEBP.',
+        'photo.max' => 'Ukuran file terlalu besar. Maksimal 5 MB.'
+    ]);
+    
+    $user->name = $request->name;
+    
+    if ($request->hasFile('photo')) {
+        $file = $request->file('photo');
         
-        // Validasi nama
-        $request->validate([
-            'name' => 'required|string|max:255',
-        ]);
-        
-        $user->name = $request->name;
-        
-        if ($request->hasFile('photo')) {
-            $file = $request->file('photo');
-            
-            // Cek apakah file adalah gambar
-            if (!$file->isValid() || !in_array($file->getMimeType(), ['image/jpeg', 'image/png', 'image/jpg', 'image/gif', 'image/webp'])) {
-                return response()->json([
-                    'message' => 'File harus berupa gambar (JPG, PNG, GIF, WEBP)'
-                ], 422);
-            }
-            
-            // Cek ukuran file (dalam bytes, 5MB = 5 * 1024 * 1024)
-            if ($file->getSize() > 5 * 1024 * 1024) {
-                return response()->json([
-                    'message' => 'Ukuran file foto maksimal 5 MB. File Anda ' . round($file->getSize() / 1024 / 1024, 2) . ' MB.'
-                ], 422);
-            }
-            
-            try {
-                // 🔥 HAPUS FOTO LAMA JIKA ADA
-                if ($user->photo_profile) {
-                    $oldPublicId = $this->extractPublicIdFromUrl($user->photo_profile);
-                    if ($oldPublicId) {
-                        $this->deleteFromCloudinary($oldPublicId);
-                    }
+        try {
+            // 🔥 HAPUS FOTO LAMA JIKA ADA
+            if ($user->photo_profile) {
+                $oldPublicId = $this->extractPublicIdFromUrl($user->photo_profile);
+                if ($oldPublicId) {
+                    $this->deleteFromCloudinary($oldPublicId);
                 }
-                
-                // Konfigurasi Cloudinary
-                $cloudName = 'dswy4tagj';
-                $apiKey = '877393947668591';
-                $apiSecret = 'h-EXj0-IhNHx2zKBuNXVwNbPeWI';
-                $folder = 'profiles';
-                $timestamp = time();
-                
-                // Generate signature
-                $signature = sha1("folder={$folder}&timestamp={$timestamp}" . $apiSecret);
-                
-                // Upload dengan cURL
-                $ch = curl_init();
-                curl_setopt($ch, CURLOPT_URL, "https://api.cloudinary.com/v1_1/{$cloudName}/image/upload");
-                curl_setopt($ch, CURLOPT_POST, 1);
-                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-                curl_setopt($ch, CURLOPT_POSTFIELDS, [
-                    'file' => new CURLFile($file->getRealPath(), $file->getMimeType(), $file->getClientOriginalName()),
-                    'api_key' => $apiKey,
-                    'timestamp' => $timestamp,
-                    'folder' => $folder,
-                    'signature' => $signature,
-                ]);
-                
-                $response = curl_exec($ch);
-                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-                curl_close($ch);
-                
-                if ($httpCode != 200) {
-                    $error = json_decode($response, true);
-                    throw new \Exception($error['error']['message'] ?? 'Upload failed');
-                }
-                
-                $result = json_decode($response, true);
-                $user->photo_profile = $result['secure_url'];
-                
-            } catch (\Exception $e) {
-                \Log::error('Upload Error: ' . $e->getMessage());
-                return response()->json([
-                    'message' => 'Upload foto gagal: ' . $e->getMessage()
-                ], 500);
             }
+            
+            // Konfigurasi Cloudinary
+            $cloudName = 'dswy4tagj';
+            $apiKey = '877393947668591';
+            $apiSecret = 'h-EXj0-IhNHx2zKBuNXVwNbPeWI';
+            $folder = 'profiles';
+            $timestamp = time();
+            
+            // Generate signature
+            $signature = sha1("folder={$folder}&timestamp={$timestamp}" . $apiSecret);
+            
+            // Upload dengan cURL
+            $ch = curl_init();
+            curl_setopt($ch, CURLOPT_URL, "https://api.cloudinary.com/v1_1/{$cloudName}/image/upload");
+            curl_setopt($ch, CURLOPT_POST, 1);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, [
+                'file' => new CURLFile($file->getRealPath(), $file->getMimeType(), $file->getClientOriginalName()),
+                'api_key' => $apiKey,
+                'timestamp' => $timestamp,
+                'folder' => $folder,
+                'signature' => $signature,
+            ]);
+            
+            $response = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+            
+            if ($httpCode != 200) {
+                $error = json_decode($response, true);
+                throw new \Exception($error['error']['message'] ?? 'Upload failed');
+            }
+            
+            $result = json_decode($response, true);
+            $user->photo_profile = $result['secure_url'];
+            
+        } catch (\Exception $e) {
+            \Log::error('Upload Error: ' . $e->getMessage());
+            return response()->json([
+                'message' => 'Upload foto gagal: ' . $e->getMessage()
+            ], 422);
         }
-        
-        $user->save();
-        
-        return response()->json([
-            'message' => 'Profil berhasil diperbarui', 
-            'user' => $user
-        ]);
     }
+    
+    $user->save();
+    
+    return response()->json([
+        'message' => 'Profil berhasil diperbarui', 
+        'user' => $user
+    ]);
+}
 
     // Helper function untuk extract public_id dari URL Cloudinary
     private function extractPublicIdFromUrl($url) {
