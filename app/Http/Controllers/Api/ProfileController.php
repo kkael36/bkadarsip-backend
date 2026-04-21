@@ -23,23 +23,15 @@ class ProfileController extends Controller {
         try {
             $file = $request->file('photo');
             
-            // PAKSA KONFIGURASI LANGSUNG DI SINI
-            $result = \CloudinaryLabs\CloudinaryLaravel\Facades\Cloudinary::upload(
-                $file->getRealPath(), 
-                [
-                    'folder' => 'profiles',
-                    'cloud_name' => 'dswy4tagj',
-                    'api_key'    => '877393947668591',
-                    'api_secret' => 'h-EXj0-IhNHx2zKBuNXVwNbPeWI',
-                ]
-            );
+            // ✅ CARA YANG BENAR UNTUK LARAVEL
+            $result = Cloudinary::upload($file->getRealPath(), [
+                'folder' => 'profiles'
+            ]);
 
             $user->photo_profile = $result->getSecurePath();
         } catch (\Exception $e) {
-            // Jika masih error 500, pesan aslinya akan muncul di tab Network > Response
             return response()->json([
-                'message' => 'Cloudinary Error: ' . $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'message' => 'Cloudinary Error: ' . $e->getMessage()
             ], 500);
         }
     }
