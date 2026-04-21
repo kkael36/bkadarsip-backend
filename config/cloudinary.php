@@ -1,13 +1,13 @@
 <?php
 
 return [
-    'cloud_url' => env('CLOUDINARY_URL'),
+    'cloud_url' => 'cloudinary://877393947668591:h-EXj0-IhNHx2zKBuNXVwNbPeWI@dswy4tagj',
 
     'cloud' => [
-        'cloud_name' => env('CLOUDINARY_CLOUD_NAME', 'dswy4tagj'),
-        'api_key'    => env('CLOUDINARY_API_KEY', '877393947668591'),
-        'api_secret' => env('CLOUDINARY_API_SECRET', 'h-EXj0-IhNHx2zKBuNXVwNbPeWI'),
+        'cloud_name' => 'dswy4tagj',
+        'api_key'    => '877393947668591',
+        'api_secret' => 'h-EXj0-IhNHx2zKBuNXVwNbPeWI',
     ],
 
-    'upload_preset' => env('CLOUDINARY_UPLOAD_PRESET'),
+    'upload_preset' => null,
 ];
