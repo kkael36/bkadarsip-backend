@@ -11,70 +11,134 @@ use CURLFile;
 
 class ProfileController extends Controller {
 
-  public function updateGeneral(Request $request) {
-    $user = $request->user();
-    
-    $request->validate([
-        'name' => 'required|string|max:255',
-        'photo' => 'nullable|image|max:5120'
-    ]);
-    
-    $user->name = $request->name;
-    
-    if ($request->hasFile('photo')) {
-        try {
+    public function updateGeneral(Request $request) {
+        $user = $request->user();
+        
+        // Validasi nama
+        $request->validate([
+            'name' => 'required|string|max:255',
+        ]);
+        
+        $user->name = $request->name;
+        
+        if ($request->hasFile('photo')) {
             $file = $request->file('photo');
             
-            // Konfigurasi Cloudinary
-            $cloudName = 'dswy4tagj';
-            $apiKey = '877393947668591';
-            $apiSecret = 'h-EXj0-IhNHx2zKBuNXVwNbPeWI';
-            $folder = 'profiles';
-            $timestamp = time();
-            
-            // Generate signature
-            $signature = sha1("folder={$folder}&timestamp={$timestamp}" . $apiSecret);
-            
-            // Upload dengan cURL
-            $ch = curl_init();
-            curl_setopt($ch, CURLOPT_URL, "https://api.cloudinary.com/v1_1/{$cloudName}/image/upload");
-            curl_setopt($ch, CURLOPT_POST, 1);
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_POSTFIELDS, [
-                'file' => new CURLFile($file->getRealPath(), $file->getMimeType(), $file->getClientOriginalName()),
-                'api_key' => $apiKey,
-                'timestamp' => $timestamp,
-                'folder' => $folder,
-                'signature' => $signature,
-            ]);
-            
-            $response = curl_exec($ch);
-            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            curl_close($ch);
-            
-            if ($httpCode != 200) {
-                $error = json_decode($response, true);
-                throw new \Exception($error['error']['message'] ?? 'Upload failed');
+            // Cek apakah file adalah gambar
+            if (!$file->isValid() || !in_array($file->getMimeType(), ['image/jpeg', 'image/png', 'image/jpg', 'image/gif', 'image/webp'])) {
+                return response()->json([
+                    'message' => 'File harus berupa gambar (JPG, PNG, GIF, WEBP)'
+                ], 422);
             }
             
-            $result = json_decode($response, true);
-            $user->photo_profile = $result['secure_url'];
+            // Cek ukuran file (dalam bytes, 5MB = 5 * 1024 * 1024)
+            if ($file->getSize() > 5 * 1024 * 1024) {
+                return response()->json([
+                    'message' => 'Ukuran file foto maksimal 5 MB. File Anda ' . round($file->getSize() / 1024 / 1024, 2) . ' MB.'
+                ], 422);
+            }
             
-        } catch (\Exception $e) {
-            \Log::error('Upload Error: ' . $e->getMessage());
-            return response()->json([
-                'message' => 'Upload foto gagal: ' . $e->getMessage()
-            ], 500);
+            try {
+                // 🔥 HAPUS FOTO LAMA JIKA ADA
+                if ($user->photo_profile) {
+                    $oldPublicId = $this->extractPublicIdFromUrl($user->photo_profile);
+                    if ($oldPublicId) {
+                        $this->deleteFromCloudinary($oldPublicId);
+                    }
+                }
+                
+                // Konfigurasi Cloudinary
+                $cloudName = 'dswy4tagj';
+                $apiKey = '877393947668591';
+                $apiSecret = 'h-EXj0-IhNHx2zKBuNXVwNbPeWI';
+                $folder = 'profiles';
+                $timestamp = time();
+                
+                // Generate signature
+                $signature = sha1("folder={$folder}&timestamp={$timestamp}" . $apiSecret);
+                
+                // Upload dengan cURL
+                $ch = curl_init();
+                curl_setopt($ch, CURLOPT_URL, "https://api.cloudinary.com/v1_1/{$cloudName}/image/upload");
+                curl_setopt($ch, CURLOPT_POST, 1);
+                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                curl_setopt($ch, CURLOPT_POSTFIELDS, [
+                    'file' => new CURLFile($file->getRealPath(), $file->getMimeType(), $file->getClientOriginalName()),
+                    'api_key' => $apiKey,
+                    'timestamp' => $timestamp,
+                    'folder' => $folder,
+                    'signature' => $signature,
+                ]);
+                
+                $response = curl_exec($ch);
+                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                curl_close($ch);
+                
+                if ($httpCode != 200) {
+                    $error = json_decode($response, true);
+                    throw new \Exception($error['error']['message'] ?? 'Upload failed');
+                }
+                
+                $result = json_decode($response, true);
+                $user->photo_profile = $result['secure_url'];
+                
+            } catch (\Exception $e) {
+                \Log::error('Upload Error: ' . $e->getMessage());
+                return response()->json([
+                    'message' => 'Upload foto gagal: ' . $e->getMessage()
+                ], 500);
+            }
         }
+        
+        $user->save();
+        
+        return response()->json([
+            'message' => 'Profil berhasil diperbarui', 
+            'user' => $user
+        ]);
     }
-    
-    $user->save();
-    
-    return response()->json([
-        'message' => 'Profil berhasil diperbarui', 
-        'user' => $user
-    ]);
-}
+
+    // Helper function untuk extract public_id dari URL Cloudinary
+    private function extractPublicIdFromUrl($url) {
+        // URL pattern: https://res.cloudinary.com/cloud_name/image/upload/v1234567890/folder/filename.jpg
+        preg_match('/\/upload\/v\d+\/(.+)\.(jpg|jpeg|png|gif|webp)/', $url, $matches);
+        return $matches[1] ?? null;
+    }
+
+    // Helper function untuk hapus dari Cloudinary
+    private function deleteFromCloudinary($publicId) {
+        $cloudName = 'dswy4tagj';
+        $apiKey = '877393947668591';
+        $apiSecret = 'h-EXj0-IhNHx2zKBuNXVwNbPeWI';
+        $timestamp = time();
+        
+        $signature = sha1("public_id={$publicId}&timestamp={$timestamp}" . $apiSecret);
+        
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, "https://api.cloudinary.com/v1_1/{$cloudName}/image/destroy");
+        curl_setopt($ch, CURLOPT_POST, 1);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, [
+            'public_id' => $publicId,
+            'api_key' => $apiKey,
+            'timestamp' => $timestamp,
+            'signature' => $signature,
+        ]);
+        
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        
+        if ($httpCode == 200) {
+            $result = json_decode($response, true);
+            if ($result['result'] == 'ok') {
+                \Log::info('Old photo deleted from Cloudinary: ' . $publicId);
+            }
+            return $result;
+        }
+        
+        return null;
+    }
 
     // 2. FLOW GANTI EMAIL
     public function requestEmailChange(Request $request) {
