@@ -69,7 +69,7 @@ class ArsipController extends Controller
             $realPath = $file->getRealPath();
             Log::info("File diterima: " . $file->getClientOriginalName());
 
-            // 1. Upload ke Cloudinary (konfigurasi hardcoded seperti ProfileController)
+            // 1. Upload ke Cloudinary
             Log::info("Upload ke Cloudinary...");
             $cloudName = 'dswy4tagj';
             $apiKey = '877393947668591';
@@ -77,13 +77,11 @@ class ArsipController extends Controller
             $folder = 'sp2d_arsip';
             $timestamp = time();
             
-            // Generate signature
             $signature = sha1("folder={$folder}&timestamp={$timestamp}" . $apiSecret);
             
-            // Upload dengan cURL
             $ch = curl_init();
             curl_setopt($ch, CURLOPT_URL, "https://api.cloudinary.com/v1_1/{$cloudName}/image/upload");
-            curl_setopt($ch, CURLOPT_POST, 1);
+            curl_setopt($ch, CURLOPT_POST, true);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_TIMEOUT, 30);
             curl_setopt($ch, CURLOPT_POSTFIELDS, [
@@ -155,7 +153,6 @@ class ArsipController extends Controller
 
     private function doOCRWithPublicEndpoint($imagePath)
     {
-        // Endpoint PUBLIC (tanpa token)
         $url = "https://cartyspaceship-ocr.hf.space/ocr";
         
         try {
@@ -166,7 +163,6 @@ class ArsipController extends Controller
                 return "";
             }
             
-            // Prepare file
             $fileData = new \CURLFile($imagePath);
             
             $ch = curl_init();
@@ -190,23 +186,16 @@ class ArsipController extends Controller
             
             if ($httpCode === 200) {
                 $decoded = json_decode($response, true);
-                Log::info("Response: " . json_encode($decoded));
                 
-                // Format response dari endpoint public menggunakan field 'teks'
                 if (isset($decoded['teks'])) {
                     return $decoded['teks'];
                 } elseif (isset($decoded['text'])) {
                     return $decoded['text'];
                 } elseif (isset($decoded['result'])) {
                     return $decoded['result'];
-                } elseif (isset($decoded['data'])) {
-                    return $decoded['data'];
-                } elseif (is_string($decoded)) {
-                    return $decoded;
                 }
             }
             
-            Log::error("HTTP {$httpCode}: " . $response);
             return "";
             
         } catch (\Exception $e) {
@@ -229,21 +218,15 @@ class ArsipController extends Controller
             return $res;
         }
 
-        // Bersihkan teks: replace newline dengan spasi, hapus multiple spaces
         $text = preg_replace('/\s+/', ' ', $text);
         Log::info("Parsing text: " . substr($text, 0, 500));
 
-        // ==================== 1. PARSING NO SURAT ====================
-        // Format OCR: "N0M0R:931/001302/15/2013" atau "NOMOR:931/001302/LS/2013"
+        // 1. PARSING NO SURAT
         $patterns = [
-            // Pattern untuk format "N0M0R:931/001302/15/2013" (angka 0 bukan huruf O)
             '/(?:N0M0R|NOMOR|No\.?)\s*[:;]?\s*(\d{3})\/(\d{6})\/(\d{2,3})\/(\d{4})/i',
-            // Pattern untuk format "931/001302/LS/2013" (huruf)
             '/(?:N0M0R|NOMOR|No\.?)\s*[:;]?\s*(\d{3})\/(\d{6})\/([A-Z]{2,3})\/(\d{4})/i',
-            // Pattern tanpa label "NOMOR"
             '/(\d{3})\/(\d{6})\/(\d{2,3})\/(\d{4})/i',
             '/(\d{3})\/(\d{6})\/([A-Z]{2,3})\/(\d{4})/i',
-            '/(\d{3})\/(\d{4,8})\/([A-Z0-9]{2,3})\/(\d{4})/i',
         ];
         
         foreach ($patterns as $pattern) {
@@ -251,74 +234,58 @@ class ArsipController extends Controller
                 $res["kode_klas"] = $m[1];
                 $res["no_surat"] = "{$m[1]}/{$m[2]}/" . strtoupper($m[3]) . "/{$m[4]}";
                 $res["tahun"] = $m[4];
-                Log::info("No Surat ditemukan: " . $res["no_surat"]);
+                Log::info("No Surat: " . $res["no_surat"]);
                 break;
             }
         }
 
-        // Backup cari tahun jika no surat tidak ditemukan
         if (empty($res["tahun"])) {
             if (preg_match('/(20[0-9]{2})/', $text, $m)) {
                 $res["tahun"] = $m[1];
-                Log::info("Tahun ditemukan dari backup: " . $res["tahun"]);
             }
         }
 
-        // ==================== 2. PARSING KEPERLUAN ====================
-        // Format OCR: "KEPERLUAN:PEMBAYARAN PENGADAAN KURS KERO SEKSUAL..."
+        // 2. PARSING KEPERLUAN
         $keperluanPatterns = [
             '/KEPERLUAN\s*[:;]?\s*(.*?)(?=KEGIATAN|No\.|Rp|JUMLAH|$)/is',
-            '/Keperluan\s*[:;]?\s*(.*?)(?=Kegiatan|No\.|Rp|Jumlah|$)/is',
-            '/PEMBAYARAN\s*[:;]?\s*(.*?)(?=KEGIATAN|No\.|Rp|JUMLAH|$)/is',
-            '/Untuk\s*[:;]?\s*(.*?)(?=Kegiatan|No\.|Rp|$)/is',
+            '/Keperluan\s*[:;]?\s*(.*?)(?=Kegiatan|No\.|Rp|$)/is',
         ];
         
         foreach ($keperluanPatterns as $pattern) {
             if (preg_match($pattern, $text, $m)) {
                 $keperluanText = trim(preg_replace('/\s+/', ' ', $m[1]));
-                if (strlen($keperluanText) > 5 && strlen($keperluanText) < 500) {
+                if (strlen($keperluanText) > 5) {
                     $res["keperluan"] = $keperluanText;
-                    Log::info("Keperluan ditemukan: " . $res["keperluan"]);
+                    Log::info("Keperluan: " . $res["keperluan"]);
                     break;
                 }
             }
         }
 
-        // ==================== 3. PARSING NOMINAL ====================
-        // Format OCR: "UANG SEBESAR RP 32.997.500" atau "JUMLAH YANG DLBEYARKAN RP. 32.997.500"
+        // 3. PARSING NOMINAL
         $nominalPatterns = [
             '/UANG SEBESAR RP\s*([\d\.]+)/i',
-            '/UANG SEBESAR RP\.?\s*([\d\.]+)/i',
             '/JUMLAH YANG DLBEYARKAN\s*RP\.?\s*([\d\.]+)/i',
-            '/JUMLAH YANG DIBAYARKAN\s*RP\.?\s*([\d\.]+)/i',
             '/Uang sebesar Rp\s*([\d\.]+)/i',
-            '/(?:Rp|Rupiah|RP\.?)\s*[:;]?\s*([\d\.\,]{5,})/i',
+            '/(?:Rp|Rupiah)\s*([\d\.\,]+)/i',
         ];
         
         foreach ($nominalPatterns as $pattern) {
             if (preg_match($pattern, $text, $m)) {
-                $nominal = trim($m[1]);
-                // Bersihkan titik sebagai pemisah ribuan
-                $numericNominal = (int) str_replace('.', '', $nominal);
-                if ($numericNominal >= 10000) {
-                    $res["nominal"] = "Rp " . $nominal;
-                    Log::info("Nominal ditemukan: " . $res["nominal"]);
-                    break;
-                }
+                $res["nominal"] = "Rp " . $m[1];
+                Log::info("Nominal: " . $res["nominal"]);
+                break;
             }
         }
 
         return $res;
     }
 
-    // Helper function untuk extract public_id dari URL Cloudinary (sama dengan ProfileController)
     private function extractPublicIdFromUrl($url) {
-        // URL pattern: https://res.cloudinary.com/cloud_name/image/upload/v1234567890/folder/filename.jpg
         preg_match('/\/upload\/v\d+\/(.+)\.(jpg|jpeg|png|gif|webp)/', $url, $matches);
         return $matches[1] ?? null;
     }
 
-    // Helper function untuk hapus dari Cloudinary (sama dengan ProfileController)
     private function deleteFromCloudinary($publicId) {
         $cloudName = 'dswy4tagj';
         $apiKey = '877393947668591';
@@ -339,17 +306,8 @@ class ArsipController extends Controller
         ]);
         
         $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
         
-        if ($httpCode == 200) {
-            $result = json_decode($response, true);
-            if ($result['result'] == 'ok') {
-                Log::info('File deleted from Cloudinary: ' . $publicId);
-            }
-            return $result;
-        }
-        
-        return null;
+        return $response;
     }
 }
