@@ -153,7 +153,8 @@ class ArsipController extends Controller
 
     private function doOCRWithPublicEndpoint($imagePath)
     {
-        $url = "https://cartyspaceship-ocr.hf.space";
+        $url = "https://cartyspaceship-ocr.hf.space/ocr";
+         
         
         try {
             Log::info("Memanggil public endpoint: " . $url);
