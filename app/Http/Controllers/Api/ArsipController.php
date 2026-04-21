@@ -176,118 +176,83 @@ class ArsipController extends Controller
     }
 
     private function doOCRWithFastAPI($imagePath)
-    {
-        // Endpoint FastAPI dari main.py (PRIVATE SPACE)
-        $url = "https://albedoes-ocr-bkad.hf.space/ocr";
-        $hf_token = $this->hfToken;
+{
+    $url = "https://albedoes-ocr-bkad.hf.space/ocr";
+    $hf_token = $this->hfToken;
+    
+    try {
+        Log::info("Memanggil FastAPI endpoint: " . $url);
         
-        try {
-            Log::info("Memanggil FastAPI endpoint: " . $url);
-            
-            if (empty($hf_token)) {
-                Log::error("HF_TOKEN tidak diset! Cannot access private space");
-                return "";
-            }
-            
-            Log::info("Menggunakan token: " . substr($hf_token, 0, 10) . "...");
-            
-            // Cek apakah file ada
-            if (!file_exists($imagePath)) {
-                Log::error("File tidak ditemukan: " . $imagePath);
-                return "";
-            }
-            
-            // Prepare file untuk upload (sesuai dengan parameter file: UploadFile = File(...))
-            $fileData = new \CURLFile($imagePath);
-            
-            $ch = curl_init();
-            curl_setopt($ch, CURLOPT_URL, $url);
-            curl_setopt($ch, CURLOPT_POST, true);
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 60);
-            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 30);
-            
-            // Kirim sebagai multipart/form-data dengan field 'file'
-            curl_setopt($ch, CURLOPT_POSTFIELDS, ['file' => $fileData]);
-            
-            // WAJIB PAKAI TOKEN UNTUK PRIVATE SPACE!
-            curl_setopt($ch, CURLOPT_HTTPHEADER, [
-                'Authorization: Bearer ' . $hf_token,
-            ]);
-            
-            // Debug: tambahkan verbose
-            curl_setopt($ch, CURLOPT_VERBOSE, true);
-            $verbose = fopen('php://temp', 'w+');
-            curl_setopt($ch, CURLOPT_STDERR, $verbose);
-            
-            $response = curl_exec($ch);
-            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            $error = curl_error($ch);
-            
-            // Baca verbose output
-            rewind($verbose);
-            $verboseLog = stream_get_contents($verbose);
-            Log::info("CURL Verbose: " . $verboseLog);
-            
-            curl_close($ch);
-            
-            Log::info("FastAPI Response HTTP Code: {$httpCode}");
-            
-            // Cek apakah token valid
-            if ($httpCode === 401) {
-                Log::error("UNAUTHORIZED! Token Hugging Face tidak valid atau expired");
-                return "";
-            }
-            
-            if ($httpCode === 403) {
-                Log::error("FORBIDDEN! Token tidak memiliki akses ke Space ini");
-                return "";
-            }
-            
-            if ($httpCode !== 200) {
-                Log::error("FastAPI Error - HTTP {$httpCode}: " . $error);
-                if (!empty($response)) {
-                    Log::error("Response body: " . substr($response, 0, 500));
-                }
-                return "";
-            }
-            
-            if (empty($response)) {
-                Log::error("FastAPI Response kosong");
-                return "";
-            }
-            
-            Log::info("Raw response: " . substr($response, 0, 500));
-            
-            // Parse JSON response dari FastAPI
+        // Cek file
+        if (!file_exists($imagePath)) {
+            Log::error("File tidak ditemukan: " . $imagePath);
+            return "";
+        }
+        
+        // Buat CURLFile dengan mime type yang benar
+        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+        $mimeType = finfo_file($finfo, $imagePath);
+        finfo_close($finfo);
+        
+        $fileData = new \CURLFile($imagePath, $mimeType, basename($imagePath));
+        
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 60);
+        
+        // POST fields dengan field name 'file' (sesuai dokumentasi)
+        curl_setopt($ch, CURLOPT_POSTFIELDS, ['file' => $fileData]);
+        
+        // Header: Authorization + biarkan curl yang set Content-Type
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Authorization: Bearer ' . $hf_token,
+        ]);
+        
+        // JANGAN set Content-Type manual! Biarkan curl yang set dengan boundary
+        
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $error = curl_error($ch);
+        
+        curl_close($ch);
+        
+        Log::info("FastAPI Response HTTP Code: {$httpCode}");
+        
+        if ($error) {
+            Log::error("CURL Error: " . $error);
+            return "";
+        }
+        
+        if ($httpCode === 200) {
             $decoded = json_decode($response, true);
+            Log::info("Response: " . json_encode($decoded));
             
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                Log::error("JSON decode error: " . json_last_error_msg());
-                return "";
-            }
-            
-            // Cek struktur response dari main.py
-            if (isset($decoded['status']) && $decoded['status'] === 'success') {
-                if (isset($decoded['teks'])) {
-                    $teks = $decoded['teks'];
-                    Log::info("OCR berhasil, jumlah kata: " . ($decoded['jumlah_kata'] ?? 0));
-                    return $teks;
-                }
-            } elseif (isset($decoded['teks'])) {
+            // Response dari API Anda
+            if (isset($decoded['teks'])) {
                 return $decoded['teks'];
             } elseif (isset($decoded['result'])) {
                 return $decoded['result'];
+            } elseif (is_string($decoded)) {
+                return $decoded;
             }
-            
-            Log::warning("Response tidak mengandung teks. Structure: " . json_encode(array_keys($decoded)));
+        } elseif ($httpCode === 422) {
+            Log::error("Validation Error: " . $response);
             return "";
-            
-        } catch (\Exception $e) {
-            Log::error("FastAPI Exception: " . $e->getMessage());
+        } elseif ($httpCode === 401) {
+            Log::error("Unauthorized - Cek token HF_TOKEN");
             return "";
         }
+        
+        Log::error("HTTP {$httpCode}: " . $response);
+        return "";
+        
+    } catch (\Exception $e) {
+        Log::error("FastAPI Exception: " . $e->getMessage());
+        return "";
     }
+}
 
     private function parseDataDariFullText($text)
     {
