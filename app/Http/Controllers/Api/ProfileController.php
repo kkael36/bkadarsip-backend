@@ -12,38 +12,43 @@ class ProfileController extends Controller {
 
     // 1. UPDATE NAMA & FOTO
     public function updateGeneral(Request $request) {
-        $user = $request->user();
-        
-        $request->validate([
-            'name' => 'required|string|max:255',
-            'photo' => 'nullable|image|max:2048'
-        ]);
-        
-        if ($request->hasFile('photo')) {
-            // Upload langsung ke Cloudinary
-            // getRealPath() mengambil file temporary untuk dikirim ke Cloudinary
-            $result = Cloudinary::upload($request->file('photo')->getRealPath(), [
-                'folder' => 'profiles',
-                'transformation' => [
-                    'width' => 400, 
-                    'height' => 400, 
-                    'crop' => 'fill'
+    $user = $request->user();
+    
+    $request->validate([
+        'name' => 'required|string|max:255',
+        'photo' => 'nullable|image'
+    ]);
+    
+    if ($request->hasFile('photo')) {
+        try {
+            $file = $request->file('photo');
+            
+            // PAKSA KONFIGURASI LANGSUNG DI SINI
+            $result = \CloudinaryLabs\CloudinaryLaravel\Facades\Cloudinary::upload(
+                $file->getRealPath(), 
+                [
+                    'folder' => 'profiles',
+                    'cloud_name' => 'dswy4tagj',
+                    'api_key'    => '877393947668591',
+                    'api_secret' => 'h-EXj0-IhNHx2zKBuNXVwNbPeWI',
                 ]
-            ]);
+            );
 
-            // PENTING: getSecurePath() menghasilkan URL https://res.cloudinary.com/...
-            // Ini yang membuat frontend kamu tidak lagi mencari ke domain Vercel/Railway lokal
             $user->photo_profile = $result->getSecurePath();
+        } catch (\Exception $e) {
+            // Jika masih error 500, pesan aslinya akan muncul di tab Network > Response
+            return response()->json([
+                'message' => 'Cloudinary Error: ' . $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ], 500);
         }
-
-        $user->name = $request->name;
-        $user->save();
-
-        return response()->json([
-            'message' => 'Profil berhasil diperbarui', 
-            'user' => $user
-        ]);
     }
+
+    $user->name = $request->name;
+    $user->save();
+
+    return response()->json(['message' => 'Profil berhasil diperbarui', 'user' => $user]);
+}
 
     // 2. FLOW GANTI EMAIL
     public function requestEmailChange(Request $request) {
