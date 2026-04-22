@@ -57,6 +57,8 @@ class ArsipController extends Controller
 
     public function upload(Request $request)
     {
+          set_time_limit(0);
+
         try {
             Log::info("=== UPLOAD FUNCTION STARTED ===");
             
