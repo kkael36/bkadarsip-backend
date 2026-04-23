@@ -57,7 +57,7 @@ class ArsipController extends Controller
 
     public function upload(Request $request)
     {
-        // 🔥 ANTI TIMEOUT & BOOST MEMORY (Sama kayak request lu)
+        // 🔥 ANTI TIMEOUT & BOOST MEMORY
         set_time_limit(0);
         ini_set('max_execution_time', 0);
         ini_set('memory_limit', '512M');
@@ -82,7 +82,6 @@ class ArsipController extends Controller
             $folder    = 'sp2d_arsip';
             $timestamp = time();
             
-            // Generate signature sesuai pola ProfileController
             $signature = sha1("folder={$folder}&timestamp={$timestamp}" . $apiSecret);
             
             $ch = curl_init();
@@ -132,7 +131,7 @@ class ArsipController extends Controller
                 ]);
             }
 
-            // 3. Parsing Data (LOGIKA REGEX SAKTI)
+            // 3. Parsing Data (LOGIKA REGEX SAKTI v2)
             $parsed = $this->parseDataDariFullText($textMentah);
             Log::info("Hasil parsing: " . json_encode($parsed));
 
@@ -172,7 +171,6 @@ class ArsipController extends Controller
             curl_setopt($ch, CURLOPT_URL, $url);
             curl_setopt($ch, CURLOPT_POST, true);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            // 🔥 TIMEOUT 3 MENIT BIAR GAK NETWORK ERROR
             curl_setopt($ch, CURLOPT_TIMEOUT, 180); 
             curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 30);
             curl_setopt($ch, CURLOPT_POSTFIELDS, ['file' => $fileData]);
@@ -182,8 +180,6 @@ class ArsipController extends Controller
             $error = curl_error($ch);
             curl_close($ch);
             
-            Log::info("Public OCR Response HTTP Code: {$httpCode}");
-            
             if ($error) {
                 Log::error("CURL Error: " . $error);
                 return "";
@@ -191,14 +187,7 @@ class ArsipController extends Controller
             
             if ($httpCode === 200) {
                 $decoded = json_decode($response, true);
-                
-                if (isset($decoded['teks'])) {
-                    return $decoded['teks'];
-                } elseif (isset($decoded['text'])) {
-                    return $decoded['text'];
-                } elseif (isset($decoded['result'])) {
-                    return $decoded['result'];
-                }
+                return $decoded['teks'] ?? $decoded['text'] ?? $decoded['result'] ?? "";
             }
             
             return "";
@@ -211,76 +200,33 @@ class ArsipController extends Controller
 
     private function parseDataDariFullText($text)
     {
-        $res = [
-            "kode_klas" => "", 
-            "no_surat" => "", 
-            "tahun" => "", 
-            "keperluan" => "", 
-            "nominal" => ""
-        ];
+        $res = ["kode_klas" => "", "no_surat" => "", "tahun" => "", "keperluan" => "", "nominal" => ""];
+        if (empty($text)) return $res;
 
-        if (empty($text)) {
-            return $res;
+        // Normalisasi teks: satu baris & bersihkan spasi double
+        $cleanText = preg_replace('/\s+/', ' ', $text);
+
+        // 1. PARSING NO SURAT & KODE KLAS (Support OCR Typo / Spasi / Miring)
+        // Mencari pola 000/000000/AA/2013
+        if (preg_match('/(\d{3})[\s\/|I1-]+(\d{4,8})[\s\/|I1-]+([A-Z0-9]{2,5})[\s\/|I1-]+(\d{4})/i', $cleanText, $m)) {
+            $res["kode_klas"] = $m[1];
+            $res["no_surat"] = "{$m[1]}/{$m[2]}/" . strtoupper($m[3]) . "/{$m[4]}";
+            $res["tahun"] = $m[4];
+        } else {
+            // Fallback: Cari tahun aja kalau pola gagal
+            if (preg_match('/(20[0-9]{2})/', $cleanText, $m)) $res["tahun"] = $m[1];
         }
 
-        $text = preg_replace('/\s+/', ' ', $text);
-        Log::info("Parsing text: " . substr($text, 0, 500));
-
-        // 1. PARSING NO SURAT
-        $patterns = [
-            '/(?:N0M0R|NOMOR|No\.?)\s*[:;]?\s*(\d{3})\/(\d{6})\/(\d{2,3})\/(\d{4})/i',
-            '/(?:N0M0R|NOMOR|No\.?)\s*[:;]?\s*(\d{3})\/(\d{6})\/([A-Z]{2,3})\/(\d{4})/i',
-            '/(\d{3})\/(\d{6})\/(\d{2,3})\/(\d{4})/i',
-            '/(\d{3})\/(\d{6})\/([A-Z]{2,3})\/(\d{4})/i',
-        ];
-        
-        foreach ($patterns as $pattern) {
-            if (preg_match($pattern, $text, $m)) {
-                $res["kode_klas"] = $m[1];
-                $res["no_surat"] = "{$m[1]}/{$m[2]}/" . strtoupper($m[3]) . "/{$m[4]}";
-                $res["tahun"] = $m[4];
-                Log::info("No Surat: " . $res["no_surat"]);
-                break;
-            }
+        // 2. PARSING KEPERLUAN (BOUNDARY STOP DI KEGIATAN)
+        // Regex ini akan mengambil teks setelah "KEPERLUAN" tapi BERHENTI sebelum "Kegiatan" atau typo-nya "Keglatan"
+        if (preg_match('/(?:KEPERLUAN|Keperluan|Pembeyaran|Pembayaran)\s*[:;]?\s*(.*?)(?=\s*(?:Kegiatan|Keglatan|Kegiaton|No\.|Nomor|Rp|JUMLAH|Uang|$))/is', $cleanText, $m)) {
+            $res["keperluan"] = trim($m[1]);
         }
 
-        if (empty($res["tahun"])) {
-            if (preg_match('/(20[0-9]{2})/', $text, $m)) {
-                $res["tahun"] = $m[1];
-            }
-        }
-
-        // 2. PARSING KEPERLUAN
-        $keperluanPatterns = [
-            '/KEPERLUAN\s*[:;]?\s*(.*?)(?=KEGIATAN|No\.|Rp|JUMLAH|$)/is',
-            '/Keperluan\s*[:;]?\s*(.*?)(?=Kegiatan|No\.|Rp|$)/is',
-        ];
-        
-        foreach ($keperluanPatterns as $pattern) {
-            if (preg_match($pattern, $text, $m)) {
-                $keperluanText = trim(preg_replace('/\s+/', ' ', $m[1]));
-                if (strlen($keperluanText) > 5) {
-                    $res["keperluan"] = $keperluanText;
-                    Log::info("Keperluan: " . $res["keperluan"]);
-                    break;
-                }
-            }
-        }
-
-        // 3. PARSING NOMINAL
-        $nominalPatterns = [
-            '/UANG SEBESAR RP\s*([\d\.]+)/i',
-            '/JUMLAH YANG DLBEYARKAN\s*RP\.?\s*([\d\.]+)/i',
-            '/Uang sebesar Rp\s*([\d\.]+)/i',
-            '/(?:Rp|Rupiah)\s*([\d\.\,]+)/i',
-        ];
-        
-        foreach ($nominalPatterns as $pattern) {
-            if (preg_match($pattern, $text, $m)) {
-                $res["nominal"] = "Rp " . $m[1];
-                Log::info("Nominal: " . $res["nominal"]);
-                break;
-            }
+        // 3. PARSING NOMINAL (Cari angka setelah Rp atau Dibayarkan)
+        if (preg_match('/(?:Dibayarkan|sebesar|Jumlah|Rp\.?)\s*(?:Rp\.?\s*)?([\d\.,]{5,})/i', $cleanText, $m)) {
+            $numericValue = preg_replace('/[^0-9]/', '', $m[1]); // Bersihkan titik/koma
+            $res["nominal"] = $numericValue;
         }
 
         return $res;
@@ -292,13 +238,10 @@ class ArsipController extends Controller
     }
 
     private function deleteFromCloudinary($publicId) {
-        // 🔥 KONFIGURASI ENV SAMA PERSIS PROFILE
         $cloudName = env('CLOUDINARY_CLOUD_NAME');
         $apiKey    = env('CLOUDINARY_API_KEY');
         $apiSecret = env('CLOUDINARY_API_SECRET');
         $timestamp = time();
-        
-        // Generate signature untuk destroy (public_id)
         $signature = sha1("public_id={$publicId}&timestamp={$timestamp}" . $apiSecret);
         
         $ch = curl_init();
@@ -313,10 +256,9 @@ class ArsipController extends Controller
         ]);
         
         $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
         
-        if ($httpCode == 200) {
+        if (curl_getinfo($ch, CURLINFO_HTTP_CODE) == 200) {
             Log::info('Foto temporer dihapus: ' . $publicId);
         }
         
