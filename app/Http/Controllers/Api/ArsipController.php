@@ -35,11 +35,9 @@ class ArsipController extends Controller
 
     public function store(Request $request) {
         $data = $request->all();
-        // Bersihkan nominal dari karakter non-angka
         if (!empty($data['nominal'])) {
             $data['nominal'] = preg_replace('/[^0-9]/', '', $data['nominal']);
         }
-
         $validator = Validator::make($data, [
             'kode_klas' => 'required|string',
             'no_surat' => 'required|string',
@@ -56,7 +54,6 @@ class ArsipController extends Controller
         return response()->json(["success" => true, "data" => $arsip]);
     }
 
-    // 🔥 INI DIA FUNCTION UPDATE YANG TADI KEPOTONG (SORRY BANGET DIK!)
     public function update(Request $request, $id) {
         $arsip = ArsipSp2d::findOrFail($id);
         $data = $request->all();
@@ -83,26 +80,28 @@ class ArsipController extends Controller
 
     public function upload(Request $request)
     {
-        // ANTI TIMEOUT & BOOST MEMORY
+        // 🔥 ANTI TIMEOUT & BOOST MEMORY
         set_time_limit(0);
         ini_set('max_execution_time', 0);
         ini_set('memory_limit', '512M');
 
         try {
+            Log::info("=== UPLOAD FUNCTION STARTED ===");
+            
             if (!$request->hasFile('file')) {
+                Log::error("File tidak ditemukan dalam request");
                 return response()->json(["success" => false, "error" => "File tidak ditemukan"], 400);
             }
 
             $file = $request->file('file');
             $realPath = $file->getRealPath();
 
-            // 1. Upload ke Cloudinary (PAKE KONFIGURASI ENV PERSIS PROFILE)
+            // 1. Upload ke Cloudinary (PAKE ENV RAILWAY)
             $cloudName = env('CLOUDINARY_CLOUD_NAME');
             $apiKey    = env('CLOUDINARY_API_KEY');
             $apiSecret = env('CLOUDINARY_API_SECRET');
             $folder    = 'sp2d_arsip';
             $timestamp = time();
-            
             $signature = sha1("folder={$folder}&timestamp={$timestamp}" . $apiSecret);
             
             $ch = curl_init();
@@ -143,7 +142,7 @@ class ArsipController extends Controller
                 ]);
             }
 
-            // 3. Parsing Data (LOGIKA REGEX SAKTI ANTI-BABLAS)
+            // 3. Parsing Data (LOGIKA REGEX SAKTI)
             $parsed = $this->parseDataDariFullText($textMentah);
 
             return response()->json([
@@ -190,24 +189,28 @@ class ArsipController extends Controller
         $res = ["kode_klas" => "", "no_surat" => "", "tahun" => "", "keperluan" => "", "nominal" => ""];
         if (empty($text)) return $res;
 
+        // Normalisasi: Hapus spasi ganda, jadikan satu baris
         $cleanText = preg_replace('/\s+/', ' ', $text);
 
-        // 1. REGEX NO SURAT & KODE KLAS (Toleran terhadap OCR salah baca pembatas)
+        // 1. REGEX NO SURAT & KODE KLAS (Kebal salah baca simbol /)
+        // Mencari pola 000/000000/AA/2013 meskipun dibaca 000 I 000000 | AA 2013
         if (preg_match('/(\d{3})[\s\/|I1-]+(\d{4,8})[\s\/|I1-]+([A-Z0-9]{2,5})[\s\/|I1-]+(\d{4})/i', $cleanText, $m)) {
             $res["kode_klas"] = $m[1];
             $res["no_surat"] = "{$m[1]}/{$m[2]}/" . strtoupper($m[3]) . "/{$m[4]}";
             $res["tahun"] = $m[4];
         } else {
+            // Fallback cari tahun saja
             if (preg_match('/(20[0-9]{2})/', $cleanText, $m)) $res["tahun"] = $m[1];
         }
 
         // 2. REGEX KEPERLUAN (STOP SEBELUM KATA KEGIATAN/KEGLATAN)
-        if (preg_match('/(?:KEPERLUAN|Keperluan|Pembeyaran|Pembayaran)\s*[:;]?\s*(.*?)(?=\s*(?:Kegiatan|Keglatan|Kegiaton|No\.|Nomor|Rp|JUMLAH|Uang|$))/is', $cleanText, $m)) {
+        // Menjelaskan: Ambil teks setelah kata "Keperluan" TAPI berhenti tepat sebelum kata "Kegiatan" dkk.
+        if (preg_match('/(?:KEPERLUAN|Keperluan|Pembeyaran|Pembayaran)\s*[:;]?\s*(.*?)(?=\s*(?:Kegiatan|Keglatan|Kegiaton|Kegiaton|No\.|Nomor|Rp|JUMLAH|Uang|$))/is', $cleanText, $m)) {
             $res["keperluan"] = trim($m[1]);
         }
 
-        // 3. REGEX NOMINAL (Ambil angka saja)
-        if (preg_match('/(?:Dibayarkan|sebesar|Jumlah|Rp\.?)\s*(?:Rp\.?\s*)?([\d\.,]{5,})/i', $cleanText, $m)) {
+        // 3. REGEX NOMINAL (Cari angka minimal 5 digit setelah simbol uang)
+        if (preg_match('/(?:Dibayarkan|sebesar|Jumlah|Uang|Rp\.?)\s*(?:Rp\.?\s*)?([\d\.,]{5,})/i', $cleanText, $m)) {
             $res["nominal"] = preg_replace('/[^0-9]/', '', $m[1]);
         }
 
