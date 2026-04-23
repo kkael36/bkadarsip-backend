@@ -57,7 +57,10 @@ class ArsipController extends Controller
 
     public function upload(Request $request)
     {
-          set_time_limit(0);
+        // 🔥 ANTI TIMEOUT & BOOST MEMORY (Sama kayak request lu)
+        set_time_limit(0);
+        ini_set('max_execution_time', 0);
+        ini_set('memory_limit', '512M');
 
         try {
             Log::info("=== UPLOAD FUNCTION STARTED ===");
@@ -71,26 +74,27 @@ class ArsipController extends Controller
             $realPath = $file->getRealPath();
             Log::info("File diterima: " . $file->getClientOriginalName());
 
-            // 1. Upload ke Cloudinary
+            // 1. Upload ke Cloudinary (PAKE KONFIGURASI ENV PERSIS PROFILE)
             Log::info("Upload ke Cloudinary...");
-            $cloudName = 'dswy4tagj';
-            $apiKey = '877393947668591';
-            $apiSecret = 'h-EXj0-IhNHx2zKBuNXVwNbPeWI';
-            $folder = 'sp2d_arsip';
+            $cloudName = env('CLOUDINARY_CLOUD_NAME');
+            $apiKey    = env('CLOUDINARY_API_KEY');
+            $apiSecret = env('CLOUDINARY_API_SECRET');
+            $folder    = 'sp2d_arsip';
             $timestamp = time();
             
+            // Generate signature sesuai pola ProfileController
             $signature = sha1("folder={$folder}&timestamp={$timestamp}" . $apiSecret);
             
             $ch = curl_init();
             curl_setopt($ch, CURLOPT_URL, "https://api.cloudinary.com/v1_1/{$cloudName}/image/upload");
             curl_setopt($ch, CURLOPT_POST, true);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 120); 
             curl_setopt($ch, CURLOPT_POSTFIELDS, [
-                'file' => new CURLFile($realPath, $file->getMimeType(), $file->getClientOriginalName()),
-                'api_key' => $apiKey,
+                'file'      => new CURLFile($realPath, $file->getMimeType(), $file->getClientOriginalName()),
+                'api_key'   => $apiKey,
                 'timestamp' => $timestamp,
-                'folder' => $folder,
+                'folder'    => $folder,
                 'signature' => $signature,
             ]);
             
@@ -99,19 +103,19 @@ class ArsipController extends Controller
             curl_close($ch);
             
             if ($httpCloud != 200) {
-                throw new \Exception('Cloudinary Error: ' . $resCloud);
+                $error = json_decode($resCloud, true);
+                throw new \Exception('Cloudinary Error: ' . ($error['error']['message'] ?? 'Upload failed'));
             }
             
             $dataCloud = json_decode($resCloud, true);
             $secureUrl = $dataCloud['secure_url'];
             Log::info("Upload Cloudinary berhasil: " . $secureUrl);
 
-            // 2. OCR dengan endpoint PUBLIC
+            // 2. OCR dengan endpoint PUBLIC (TIMEOUT 3 MENIT)
             Log::info("Memulai OCR dengan endpoint public...");
             $textMentah = $this->doOCRWithPublicEndpoint($realPath);
             
             Log::info("Hasil OCR length: " . strlen($textMentah));
-            Log::info("Hasil OCR (first 500 chars): " . substr($textMentah, 0, 500));
 
             if (empty($textMentah)) {
                 Log::warning("OCR menghasilkan teks kosong");
@@ -128,24 +132,23 @@ class ArsipController extends Controller
                 ]);
             }
 
-            // 3. Parsing Data
+            // 3. Parsing Data (LOGIKA REGEX SAKTI)
             $parsed = $this->parseDataDariFullText($textMentah);
             Log::info("Hasil parsing: " . json_encode($parsed));
 
             return response()->json([
-                "success" => true,
-                "file_dokumen" => $secureUrl,
-                "kode_klas" => $parsed['kode_klas'],
-                "no_surat" => $parsed['no_surat'],
-                "tahun" => $parsed['tahun'],
-                "nominal" => $parsed['nominal'],
-                "keperluan" => $parsed['keperluan'],
-                "raw_ocr" => $textMentah
+                "success"       => true,
+                "file_dokumen"  => $secureUrl,
+                "kode_klas"     => $parsed['kode_klas'],
+                "no_surat"      => $parsed['no_surat'],
+                "tahun"         => $parsed['tahun'],
+                "nominal"       => $parsed['nominal'],
+                "keperluan"     => $parsed['keperluan'],
+                "raw_ocr"       => $textMentah
             ]);
 
         } catch (\Exception $e) {
             Log::error("UPLOAD/OCR CRASH: " . $e->getMessage());
-            Log::error("Stack trace: " . $e->getTraceAsString());
             return response()->json([
                 "success" => false, 
                 "error" => $e->getMessage()
@@ -156,11 +159,8 @@ class ArsipController extends Controller
     private function doOCRWithPublicEndpoint($imagePath)
     {
         $url = "https://cartyspaceship-ocr.hf.space/ocr";
-         
         
         try {
-            Log::info("Memanggil public endpoint: " . $url);
-            
             if (!file_exists($imagePath)) {
                 Log::error("File tidak ditemukan: " . $imagePath);
                 return "";
@@ -172,7 +172,9 @@ class ArsipController extends Controller
             curl_setopt($ch, CURLOPT_URL, $url);
             curl_setopt($ch, CURLOPT_POST, true);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 60);
+            // 🔥 TIMEOUT 3 MENIT BIAR GAK NETWORK ERROR
+            curl_setopt($ch, CURLOPT_TIMEOUT, 180); 
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 30);
             curl_setopt($ch, CURLOPT_POSTFIELDS, ['file' => $fileData]);
             
             $response = curl_exec($ch);
@@ -290,11 +292,13 @@ class ArsipController extends Controller
     }
 
     private function deleteFromCloudinary($publicId) {
-        $cloudName = 'dswy4tagj';
-        $apiKey = '877393947668591';
-        $apiSecret = 'h-EXj0-IhNHx2zKBuNXVwNbPeWI';
+        // 🔥 KONFIGURASI ENV SAMA PERSIS PROFILE
+        $cloudName = env('CLOUDINARY_CLOUD_NAME');
+        $apiKey    = env('CLOUDINARY_API_KEY');
+        $apiSecret = env('CLOUDINARY_API_SECRET');
         $timestamp = time();
         
+        // Generate signature untuk destroy (public_id)
         $signature = sha1("public_id={$publicId}&timestamp={$timestamp}" . $apiSecret);
         
         $ch = curl_init();
@@ -303,13 +307,18 @@ class ArsipController extends Controller
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, [
             'public_id' => $publicId,
-            'api_key' => $apiKey,
+            'api_key'   => $apiKey,
             'timestamp' => $timestamp,
             'signature' => $signature,
         ]);
         
         $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
+        
+        if ($httpCode == 200) {
+            Log::info('Foto temporer dihapus: ' . $publicId);
+        }
         
         return $response;
     }
