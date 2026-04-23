@@ -33,7 +33,7 @@ class ProfileController extends Controller {
             $file = $request->file('photo');
             
             try {
-                // 1. Hapus foto lama dari Cloudinary jika ada
+                // 1. Hapus foto lama dari Cloudinary jika ada (agar storage tidak penuh)
                 if ($user->photo_profile && strpos($user->photo_profile, 'cloudinary.com') !== false) {
                     $oldPublicId = $this->extractPublicIdFromUrl($user->photo_profile);
                     if ($oldPublicId) {
@@ -48,10 +48,10 @@ class ProfileController extends Controller {
                 $folder    = 'profiles';
                 $timestamp = time();
                 
-                // 3. Generate signature
+                // 3. Generate signature untuk keamanan API Cloudinary
                 $signature = sha1("folder={$folder}&timestamp={$timestamp}" . $apiSecret);
                 
-                // 4. Proses Upload via cURL
+                // 4. Proses Upload via cURL (Bypass config internal Laravel)
                 $ch = curl_init();
                 curl_setopt($ch, CURLOPT_URL, "https://api.cloudinary.com/v1_1/{$cloudName}/image/upload");
                 curl_setopt($ch, CURLOPT_POST, 1);
@@ -74,7 +74,7 @@ class ProfileController extends Controller {
                 }
                 
                 $result = json_decode($response, true);
-                $user->photo_profile = $result['secure_url']; 
+                $user->photo_profile = $result['secure_url']; // Simpan URL HTTPS permanen
                 
             } catch (\Exception $e) {
                 Log::error('Profile Upload Error: ' . $e->getMessage());
@@ -92,15 +92,16 @@ class ProfileController extends Controller {
         ]);
     }
 
-    // Helper: Mengambil ID unik foto Cloudinary
+    // Helper: Mengambil ID unik foto Cloudinary dari URL
     private function extractPublicIdFromUrl($url) {
+        // Mendukung path folder /profiles/
         if (preg_match('/\/upload\/v\d+\/(.+)\.[a-z]{3,4}$/', $url, $matches)) {
             return $matches[1];
         }
         return null;
     }
 
-    // Helper: Menghapus file di Cloudinary
+    // Helper: Menghapus file di Cloudinary menggunakan cURL
     private function deleteFromCloudinary($publicId) {
         $cloudName = env('CLOUDINARY_CLOUD_NAME');
         $apiKey    = env('CLOUDINARY_API_KEY');
@@ -143,12 +144,11 @@ class ProfileController extends Controller {
                 ['old_otp' => Hash::make($otp), 'expires_at' => now()->addMinutes(15), 'created_at' => now()]
             );
 
-            // MENGGUNAKAN send() AGAR LANGSUNG TERKIRIM
-            Mail::to($request->user()->email)->send(new OTPMail($otp, "OTP Perubahan Email (Lama)"));
+            // Mengirim ke email lama lewat Brevo
+            Mail::to($request->user()->email)->queue(new OTPMail($otp, "OTP Perubahan Email (Lama)"));
             return response()->json(['message' => 'Kode OTP dikirim ke email lama']);
         } catch (\Exception $e) {
-            Log::error('Mail Error: ' . $e->getMessage());
-            return response()->json(['message' => 'Gagal mengirim email: ' . $e->getMessage()], 500);
+            return response()->json(['message' => 'Gagal mengirim email verifikasi'], 500);
         }
     }
 
@@ -173,11 +173,10 @@ class ProfileController extends Controller {
                 'expires_at' => now()->addMinutes(15)
             ]);
 
-            // MENGGUNAKAN send() AGAR LANGSUNG TERKIRIM
-            Mail::to($request->new_email)->send(new OTPMail($newOtp, "Verifikasi Email Baru"));
+            // Mengirim ke email baru lewat Brevo
+            Mail::to($request->new_email)->queue(new OTPMail($newOtp, "Verifikasi Email Baru"));
             return response()->json(['message' => 'Kode OTP dikirim ke email baru']);
         } catch (\Exception $e) {
-            Log::error('Mail Error New Email: ' . $e->getMessage());
             return response()->json(['message' => 'Gagal mengirim email ke alamat baru'], 500);
         }
     }
@@ -207,11 +206,9 @@ class ProfileController extends Controller {
                 ['token' => Hash::make($otp), 'created_at' => now()]
             );
 
-            // MENGGUNAKAN send() AGAR LANGSUNG TERKIRIM
-            Mail::to($request->user()->email)->send(new OTPMail($otp, "OTP Pemulihan Kata Sandi"));
+            Mail::to($request->user()->email)->queue(new OTPMail($otp, "OTP Pemulihan Kata Sandi"));
             return response()->json(['message' => 'Kode OTP telah dikirim']);
         } catch (\Exception $e) {
-            Log::error('Mail Error Password Reset: ' . $e->getMessage());
             return response()->json(['message' => 'Gagal memproses pengiriman OTP'], 500);
         }
     }
