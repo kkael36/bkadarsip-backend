@@ -10,6 +10,9 @@ use CURLFile;
 
 class ProfileController extends Controller {
 
+    /**
+     * Update Nama & Foto Profil (Cloudinary via cURL)
+     */
     public function updateGeneral(Request $request) {
         $user = $request->user();
         
@@ -30,25 +33,25 @@ class ProfileController extends Controller {
             $file = $request->file('photo');
             
             try {
-                // Hapus foto lama dari Cloudinary jika ada
-                if ($user->photo_profile) {
+                // 1. Hapus foto lama dari Cloudinary jika ada (agar storage tidak penuh)
+                if ($user->photo_profile && strpos($user->photo_profile, 'cloudinary.com') !== false) {
                     $oldPublicId = $this->extractPublicIdFromUrl($user->photo_profile);
                     if ($oldPublicId) {
                         $this->deleteFromCloudinary($oldPublicId);
                     }
                 }
                 
-                // Ambil Konfigurasi dari Environment Railway
+                // 2. Persiapan Data Cloudinary dari Env Railway
                 $cloudName = env('CLOUDINARY_CLOUD_NAME');
                 $apiKey    = env('CLOUDINARY_API_KEY');
                 $apiSecret = env('CLOUDINARY_API_SECRET');
                 $folder    = 'profiles';
                 $timestamp = time();
                 
-                // Generate signature
+                // 3. Generate signature untuk keamanan API Cloudinary
                 $signature = sha1("folder={$folder}&timestamp={$timestamp}" . $apiSecret);
                 
-                // Upload dengan cURL
+                // 4. Proses Upload via cURL (Bypass config internal Laravel)
                 $ch = curl_init();
                 curl_setopt($ch, CURLOPT_URL, "https://api.cloudinary.com/v1_1/{$cloudName}/image/upload");
                 curl_setopt($ch, CURLOPT_POST, 1);
@@ -67,16 +70,16 @@ class ProfileController extends Controller {
                 
                 if ($httpCode != 200) {
                     $error = json_decode($response, true);
-                    throw new \Exception($error['error']['message'] ?? 'Upload failed');
+                    throw new \Exception($error['error']['message'] ?? 'Gagal mengunggah ke Cloudinary');
                 }
                 
                 $result = json_decode($response, true);
-                $user->photo_profile = $result['secure_url'];
+                $user->photo_profile = $result['secure_url']; // Simpan URL HTTPS permanen
                 
             } catch (\Exception $e) {
-                Log::error('Upload Error: ' . $e->getMessage());
+                Log::error('Profile Upload Error: ' . $e->getMessage());
                 return response()->json([
-                    'message' => 'Upload foto gagal: ' . $e->getMessage()
+                    'message' => 'Gagal memperbarui foto: ' . $e->getMessage()
                 ], 422);
             }
         }
@@ -89,13 +92,16 @@ class ProfileController extends Controller {
         ]);
     }
 
-    // Helper: Extract public_id dari URL
+    // Helper: Mengambil ID unik foto Cloudinary dari URL
     private function extractPublicIdFromUrl($url) {
-        preg_match('/\/upload\/v\d+\/(.+)\.(jpg|jpeg|png|gif|webp)/', $url, $matches);
-        return $matches[1] ?? null;
+        // Mendukung path folder /profiles/
+        if (preg_match('/\/upload\/v\d+\/(.+)\.[a-z]{3,4}$/', $url, $matches)) {
+            return $matches[1];
+        }
+        return null;
     }
 
-    // Helper: Hapus dari Cloudinary menggunakan Env
+    // Helper: Menghapus file di Cloudinary menggunakan cURL
     private function deleteFromCloudinary($publicId) {
         $cloudName = env('CLOUDINARY_CLOUD_NAME');
         $apiKey    = env('CLOUDINARY_API_KEY');
@@ -110,23 +116,23 @@ class ProfileController extends Controller {
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, [
             'public_id' => $publicId,
-            'api_key' => $apiKey,
+            'api_key'   => $apiKey,
             'timestamp' => $timestamp,
             'signature' => $signature,
         ]);
         
         $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
         
-        if ($httpCode == 200) {
-            Log::info('Foto lama dihapus dari Cloudinary: ' . $publicId);
-        }
+        Log::info("Attempt to delete old photo: " . $publicId);
     }
 
-    // --- FLOW GANTI EMAIL ---
+    /**
+     * --- FLOW GANTI EMAIL ---
+     */
     public function requestEmailChange(Request $request) {
         $request->validate(['password' => 'required']);
+        
         if (!Hash::check($request->password, $request->user()->password)) {
             return response()->json(['message' => 'Kata sandi akun salah'], 403);
         }
@@ -138,10 +144,11 @@ class ProfileController extends Controller {
                 ['old_otp' => Hash::make($otp), 'expires_at' => now()->addMinutes(15), 'created_at' => now()]
             );
 
+            // Mengirim ke email lama lewat Brevo
             Mail::to($request->user()->email)->queue(new OTPMail($otp, "OTP Perubahan Email (Lama)"));
             return response()->json(['message' => 'Kode OTP dikirim ke email lama']);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Gagal memproses antrean', 'error' => $e->getMessage()], 500);
+            return response()->json(['message' => 'Gagal mengirim email verifikasi'], 500);
         }
     }
 
@@ -162,14 +169,15 @@ class ProfileController extends Controller {
         try {
             DB::table('pending_email_changes')->where('user_id', $request->user()->id)->update([
                 'new_email' => $request->new_email, 
-                'new_otp' => Hash::make($newOtp), 
+                'new_otp'   => Hash::make($newOtp), 
                 'expires_at' => now()->addMinutes(15)
             ]);
 
+            // Mengirim ke email baru lewat Brevo
             Mail::to($request->new_email)->queue(new OTPMail($newOtp, "Verifikasi Email Baru"));
             return response()->json(['message' => 'Kode OTP dikirim ke email baru']);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Gagal memproses antrean'], 500);
+            return response()->json(['message' => 'Gagal mengirim email ke alamat baru'], 500);
         }
     }
 
@@ -183,10 +191,13 @@ class ProfileController extends Controller {
 
         $request->user()->update(['email' => $pending->new_email]);
         DB::table('pending_email_changes')->where('user_id', $request->user()->id)->delete();
+        
         return response()->json(['message' => 'Email berhasil diperbarui', 'user' => $request->user()]);
     }
 
-    // --- FLOW GANTI PASSWORD ---
+    /**
+     * --- FLOW GANTI PASSWORD ---
+     */
     public function requestPasswordOtp(Request $request) {
         try {
             $otp = rand(100000, 999999);
@@ -198,7 +209,7 @@ class ProfileController extends Controller {
             Mail::to($request->user()->email)->queue(new OTPMail($otp, "OTP Pemulihan Kata Sandi"));
             return response()->json(['message' => 'Kode OTP telah dikirim']);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Gagal memproses antrean'], 500);
+            return response()->json(['message' => 'Gagal memproses pengiriman OTP'], 500);
         }
     }
 
@@ -214,8 +225,10 @@ class ProfileController extends Controller {
 
     public function updatePassword(Request $request) {
         $request->validate(['password' => 'required|min:8|confirmed']);
+        
         $request->user()->update(['password' => Hash::make($request->password)]);
         DB::table('password_reset_tokens')->where('email', $request->user()->email)->delete();
+        
         return response()->json(['message' => 'Kata sandi berhasil diperbarui']);
     }
 }
