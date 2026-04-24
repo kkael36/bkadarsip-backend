@@ -80,11 +80,12 @@ class ArsipController extends Controller
 
     public function upload(Request $request)
     {
+        // 🔥 RAILWAY OPTIMIZATION (Boost Memory & Timeout)
         set_time_limit(120); 
         ini_set('memory_limit', '512M');
 
         try {
-            Log::info("--- START UPLOAD PROSES ---");
+            Log::info("--- START UPLOAD PROSES BKAD ---");
             
             if (!$request->hasFile('file')) {
                 return response()->json(["success" => false, "error" => "File tidak ditemukan"], 400);
@@ -118,7 +119,7 @@ class ArsipController extends Controller
             $httpCloud = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             curl_close($ch);
             
-            if ($httpCloud != 200) throw new \Exception('Gagal upload ke Cloudinary');
+            if ($httpCloud != 200) throw new \Exception('Cloudinary Gagal');
             
             $dataCloud = json_decode($resCloud, true);
             $secureUrl = $dataCloud['secure_url'];
@@ -132,11 +133,11 @@ class ArsipController extends Controller
                     "file_dokumen" => $secureUrl,
                     "kode_klas" => "", "no_surat" => "", "tahun" => "", "nominal" => "", "keperluan" => "",
                     "raw_ocr" => "",
-                    "warning" => "Proses OCR lambat/gagal. Silakan input manual."
+                    "warning" => "OCR Timeout. Data harus diisi manual."
                 ]);
             }
 
-            // 3. Parsing Data (LOGIKA FIX KEPERLUAN)
+            // 3. Parsing Data (LOGIKA REFRESHED!)
             $parsed = $this->parseDataDariFullText($textMentah);
 
             return response()->json([
@@ -183,24 +184,27 @@ class ArsipController extends Controller
         $res = ["kode_klas" => "", "no_surat" => "", "tahun" => "", "keperluan" => "", "nominal" => ""];
         if (empty($text)) return $res;
 
+        // Bersihkan spasi ganda
         $cleanText = preg_replace('/\s+/', ' ', $text);
 
-        // 1. REGEX NO SURAT & KODE KLAS
+        // 1. REGEX NO SURAT & KODE KLAS (KEBAL SALAH BACA SIMBOL /)
         if (preg_match('/(\d{3,})[\s\/|I1l-]{1,3}(\d{4,8})[\s\/|I1l-]{1,3}([A-Z0-9]{2,5})[\s\/|I1l-]{1,3}(\d{4})/i', $cleanText, $m)) {
             $res["kode_klas"] = $m[1];
             $res["no_surat"] = "{$m[1]}/{$m[2]}/" . strtoupper($m[3]) . "/{$m[4]}";
             $res["tahun"] = $m[4];
         } else {
+            // Backup jika gagal total
             if (preg_match('/(20[0-9]{2})/', $cleanText, $m)) $res["tahun"] = $m[1];
         }
 
-        // 2. REGEX KEPERLUAN (FIXED: Rp gak jadi pembatas lagi)
-        // Berhenti cuma kalau nemu label "Kegiatan", "No. Rekening", atau "Jumlah"
-        if (preg_match('/(?:KEPERLUAN|Keperluan|Keperluon|Kepeduan)\s*[:;]?\s*(.*?)(?=\s*(?:Kegiatan|Keglotan|Kegiaton|Keglatan|Kegiatun|KEGIATAN|No\.?\s*REKENING|No\.?\s*Rekening|No\.?\s*Rek|JUMLAH\s*Rp|$))/is', $cleanText, $m)) {
+        // 2. REGEX KEPERLUAN (FIXED: GAK BERHENTI DI TENGAH JALAN)
+        // Gue hapus 'No.' dan 'Rp' dari pembatas berhenti.
+        // Sekarang cuma berhenti kalau nemu kata 'Kegiatan' atau 'No. Rekening' atau 'Jumlah Rp'.
+        if (preg_match('/(?:KEPERLUAN|Keperluan|Keperluon|Keperluun)\s*[:;]?\s*(.*?)(?=\s*(?:Kegiatan|Keglotan|Kegiaton|Keglatan|Kegiatun|KEGIATAN|No\.?\s*REKENING|No\.?\s*Rekening|JUMLAH\s*Rp|Jumlah\s*Rp|$))/is', $cleanText, $m)) {
             $res["keperluan"] = trim($m[1]);
         }
 
-        // 3. REGEX NOMINAL (TOTAL AKHIR)
+        // 3. REGEX NOMINAL (TOTAL PALING BAWAH)
         if (preg_match_all('/(?:Jumlah|JUMLAH)\s*(?:Rp\.?|RP\.?)\s*([\d\.,]{5,})/i', $cleanText, $matches)) {
             $lastMatch = end($matches[1]);
             $res["nominal"] = preg_replace('/[^0-9]/', '', $lastMatch);
