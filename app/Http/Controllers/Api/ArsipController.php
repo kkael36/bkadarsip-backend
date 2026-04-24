@@ -54,7 +54,6 @@ class ArsipController extends Controller
         return response()->json(["success" => true, "data" => $arsip]);
     }
 
-    // 🔥 FUNCTION UPDATE TETAP ADA (Gak Gue Hapus!)
     public function update(Request $request, $id) {
         $arsip = ArsipSp2d::findOrFail($id);
         $data = $request->all();
@@ -81,24 +80,20 @@ class ArsipController extends Controller
 
     public function upload(Request $request)
     {
-        // 🔥 ANTI TIMEOUT & BOOST MEMORY
-        set_time_limit(0);
-        ini_set('max_execution_time', 0);
+        set_time_limit(120); 
         ini_set('memory_limit', '512M');
 
         try {
-            Log::info("=== UPLOAD FUNCTION STARTED ===");
+            Log::info("--- START UPLOAD PROSES ---");
             
             if (!$request->hasFile('file')) {
-                Log::error("File tidak ditemukan dalam request");
                 return response()->json(["success" => false, "error" => "File tidak ditemukan"], 400);
             }
 
             $file = $request->file('file');
             $realPath = $file->getRealPath();
-            Log::info("File diterima: " . $file->getClientOriginalName());
 
-            // 1. Upload ke Cloudinary (PAKE ENV RAILWAY)
+            // 1. Upload ke Cloudinary
             $cloudName = env('CLOUDINARY_CLOUD_NAME');
             $apiKey    = env('CLOUDINARY_API_KEY');
             $apiSecret = env('CLOUDINARY_API_SECRET');
@@ -110,7 +105,7 @@ class ArsipController extends Controller
             curl_setopt($ch, CURLOPT_URL, "https://api.cloudinary.com/v1_1/{$cloudName}/image/upload");
             curl_setopt($ch, CURLOPT_POST, true);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 120); 
+            curl_setopt($ch, CURLOPT_TIMEOUT, 30); 
             curl_setopt($ch, CURLOPT_POSTFIELDS, [
                 'file'      => new CURLFile($realPath, $file->getMimeType(), $file->getClientOriginalName()),
                 'api_key'   => $apiKey,
@@ -123,15 +118,12 @@ class ArsipController extends Controller
             $httpCloud = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             curl_close($ch);
             
-            if ($httpCloud != 200) {
-                $error = json_decode($resCloud, true);
-                throw new \Exception('Cloudinary Error: ' . ($error['error']['message'] ?? 'Upload failed'));
-            }
+            if ($httpCloud != 200) throw new \Exception('Gagal upload ke Cloudinary');
             
             $dataCloud = json_decode($resCloud, true);
             $secureUrl = $dataCloud['secure_url'];
 
-            // 2. OCR dengan endpoint PUBLIC (TIMEOUT 3 MENIT)
+            // 2. OCR dengan endpoint PUBLIC (Railway Safe Timeout)
             $textMentah = $this->doOCRWithPublicEndpoint($realPath);
             
             if (empty($textMentah)) {
@@ -140,11 +132,11 @@ class ArsipController extends Controller
                     "file_dokumen" => $secureUrl,
                     "kode_klas" => "", "no_surat" => "", "tahun" => "", "nominal" => "", "keperluan" => "",
                     "raw_ocr" => "",
-                    "warning" => "OCR tidak dapat membaca teks."
+                    "warning" => "Proses OCR lambat/gagal. Silakan input manual."
                 ]);
             }
 
-            // 3. Parsing Data (LOGIKA REGEX SAKTI)
+            // 3. Parsing Data (LOGIKA FIX KEPERLUAN)
             $parsed = $this->parseDataDariFullText($textMentah);
 
             return response()->json([
@@ -159,7 +151,7 @@ class ArsipController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            Log::error("UPLOAD ERROR: " . $e->getMessage());
+            Log::error("CRASH: " . $e->getMessage());
             return response()->json(["success" => false, "error" => $e->getMessage()], 500);
         }
     }
@@ -171,8 +163,8 @@ class ArsipController extends Controller
             $ch = curl_init($url);
             curl_setopt($ch, CURLOPT_POST, true);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 180); 
-            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 30);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 50); 
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
             curl_setopt($ch, CURLOPT_POSTFIELDS, ['file' => new \CURLFile($imagePath)]);
             $response = curl_exec($ch);
             $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -191,31 +183,26 @@ class ArsipController extends Controller
         $res = ["kode_klas" => "", "no_surat" => "", "tahun" => "", "keperluan" => "", "nominal" => ""];
         if (empty($text)) return $res;
 
-        // Normalisasi: Hapus spasi ganda, jadikan satu baris panjang
         $cleanText = preg_replace('/\s+/', ' ', $text);
 
-        // 1. REGEX NO SURAT & KODE KLAS (Kebal salah baca simbol /)
-        // Mencari pola 000/000000/AA/2013 meskipun dibaca 000 I 000000 | AA 2013
-        // Pola: Digits - Separator - Digits - Separator - Letters - Separator - Year
+        // 1. REGEX NO SURAT & KODE KLAS
         if (preg_match('/(\d{3,})[\s\/|I1l-]{1,3}(\d{4,8})[\s\/|I1l-]{1,3}([A-Z0-9]{2,5})[\s\/|I1l-]{1,3}(\d{4})/i', $cleanText, $m)) {
-            $res["kode_klas"] = $m[1]; // Ambil angka depan (misal: 931)
+            $res["kode_klas"] = $m[1];
             $res["no_surat"] = "{$m[1]}/{$m[2]}/" . strtoupper($m[3]) . "/{$m[4]}";
             $res["tahun"] = $m[4];
         } else {
-            // Backup jika pola lengkap gagal, cari tahun saja
             if (preg_match('/(20[0-9]{2})/', $cleanText, $m)) $res["tahun"] = $m[1];
         }
 
-        // 2. REGEX KEPERLUAN (ANTI-BABLAS)
-        // Ambil teks setelah "Keperluan" TAPI berhenti tepat sebelum kata "Kegiatan" atau typo-nya
-        if (preg_match('/(?:KEPERLUAN|Keperluan)\s*[:;]?\s*(.*?)(?=\s*(?:Kegiatan|Keglotan|Kegiaton|Keglatan|Kegiatun|No\.|Nomor|Rp|JUMLAH|Uang|$))/is', $cleanText, $m)) {
+        // 2. REGEX KEPERLUAN (FIXED: Rp gak jadi pembatas lagi)
+        // Berhenti cuma kalau nemu label "Kegiatan", "No. Rekening", atau "Jumlah"
+        if (preg_match('/(?:KEPERLUAN|Keperluan|Keperluon|Kepeduan)\s*[:;]?\s*(.*?)(?=\s*(?:Kegiatan|Keglotan|Kegiaton|Keglatan|Kegiatun|KEGIATAN|No\.?\s*REKENING|No\.?\s*Rekening|No\.?\s*Rek|JUMLAH\s*Rp|$))/is', $cleanText, $m)) {
             $res["keperluan"] = trim($m[1]);
         }
 
-        // 3. REGEX NOMINAL (SPESIFIK TOTAL PALING BAWAH)
-        // Cari angka nominal yang muncul setelah label "Jumlah Rp" (Biasanya total ada di paling akhir)
+        // 3. REGEX NOMINAL (TOTAL AKHIR)
         if (preg_match_all('/(?:Jumlah|JUMLAH)\s*(?:Rp\.?|RP\.?)\s*([\d\.,]{5,})/i', $cleanText, $matches)) {
-            $lastMatch = end($matches[1]); // Ambil match terakhir (Total Penjumlahan)
+            $lastMatch = end($matches[1]);
             $res["nominal"] = preg_replace('/[^0-9]/', '', $lastMatch);
         }
 
