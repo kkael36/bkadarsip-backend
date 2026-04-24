@@ -141,8 +141,8 @@ class ProfileController extends Controller {
                 ['old_otp' => Hash::make($otp), 'expires_at' => now()->addMinutes(15), 'created_at' => now()]
             );
 
-            // GANTI KE send()
-            Mail::to($request->user()->email)->send(new OTPMail($otp, "OTP Perubahan Email (Lama)"));
+            // MENGGUNAKAN queue()
+            Mail::to($request->user()->email)->queue(new OTPMail($otp, "OTP Perubahan Email (Lama)"));
             return response()->json(['message' => 'Kode OTP dikirim ke email lama']);
         } catch (\Exception $e) {
             Log::error('Mail Error: ' . $e->getMessage());
@@ -171,8 +171,8 @@ class ProfileController extends Controller {
                 'expires_at' => now()->addMinutes(15)
             ]);
 
-            // GANTI KE send()
-            Mail::to($request->new_email)->send(new OTPMail($newOtp, "Verifikasi Email Baru"));
+            // MENGGUNAKAN queue()
+            Mail::to($request->new_email)->queue(new OTPMail($newOtp, "Verifikasi Email Baru"));
             return response()->json(['message' => 'Kode OTP dikirim ke email baru']);
         } catch (\Exception $e) {
             Log::error('Mail Error: ' . $e->getMessage());
@@ -205,8 +205,8 @@ class ProfileController extends Controller {
                 ['token' => Hash::make($otp), 'created_at' => now()]
             );
 
-            // GANTI KE send()
-            Mail::to($request->user()->email)->send(new OTPMail($otp, "OTP Pemulihan Kata Sandi"));
+            // MENGGUNAKAN queue()
+            Mail::to($request->user()->email)->queue(new OTPMail($otp, "OTP Pemulihan Kata Sandi"));
             return response()->json(['message' => 'Kode OTP telah dikirim']);
         } catch (\Exception $e) {
             Log::error('Mail Error: ' . $e->getMessage());
