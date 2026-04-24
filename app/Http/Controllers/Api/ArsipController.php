@@ -197,9 +197,9 @@ class ArsipController extends Controller
             if (preg_match('/(20[0-9]{2})/', $cleanText, $m)) $res["tahun"] = $m[1];
         }
 
-        // 2. REGEX KEPERLUAN (FIXED: GAK BERHENTI DI TENGAH JALAN)
+        // 2. REGEX KEPERLUAN (FIXED: GAK BAKAL KEPOTONG DI TENGAH)
         // Gue hapus 'No.' dan 'Rp' dari pembatas berhenti.
-        // Sekarang cuma berhenti kalau nemu kata 'Kegiatan' atau 'No. Rekening' atau 'Jumlah Rp'.
+        // Sekarang dia nangkep semuanya sampe bener-bener nemu kata 'Kegiatan' atau tabel Rekening.
         if (preg_match('/(?:KEPERLUAN|Keperluan|Keperluon|Keperluun)\s*[:;]?\s*(.*?)(?=\s*(?:Kegiatan|Keglotan|Kegiaton|Keglatan|Kegiatun|KEGIATAN|No\.?\s*REKENING|No\.?\s*Rekening|JUMLAH\s*Rp|Jumlah\s*Rp|$))/is', $cleanText, $m)) {
             $res["keperluan"] = trim($m[1]);
         }
